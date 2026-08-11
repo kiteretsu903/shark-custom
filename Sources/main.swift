@@ -65,7 +65,18 @@ func log(_ s: String) { Log.shared.line(s) }
 
 // MARK: - BLE
 
+/// Decoded contents of the cooler's 0x06 telemetry frame.
+struct Telemetry {
+    let cold: Int      // cold end temp, °C
+    let hot: Int       // hot end temp, °C
+    let rpm: Int       // fan speed
+    let watt: Int      // device power draw
+    let flags: UInt8
+}
+
 final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
+    private(set) var latest: Telemetry?
+    var onTelemetry: ((Telemetry) -> Void)?
     private var central: CBCentralManager!
     private var target: CBPeripheral?
     private(set) var discovered: [UUID: CBPeripheral] = [:]
@@ -363,6 +374,16 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         if let e = error { log("Read error \(c.uuid): \(e.localizedDescription)"); return }
         let d = c.value ?? Data()
         log("      value \(c.uuid) = \(hex(d))  \(ascii(d))")
+
+        // Telemetry: 0x89 0x06 <flags> <rsvd> <cold> <hot> <rpm lo> <rpm hi> <watt>
+        let b = [UInt8](d)
+        if b.count >= 9, b[0] == 0x89, b[1] == 0x06 {
+            let t = Telemetry(cold: Int(b[4]), hot: Int(b[5]),
+                              rpm: Int(b[6]) | (Int(b[7]) << 8),
+                              watt: Int(b[8]), flags: b[2])
+            latest = t
+            onTelemetry?(t)
+        }
     }
 
     func peripheral(_ p: CBPeripheral, didDiscoverDescriptorsFor c: CBCharacteristic, error: Error?) {
@@ -398,6 +419,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private var textView: NSTextView!
     private var hexField: NSTextField!
+    private var telemetryItems: [NSMenuItem] = []
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -409,6 +431,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         Log.shared.sink = { [weak self] line in self?.append(line) }
         ble.onDevices = { [weak self] in self?.rebuildMenu() }
+        ble.onTelemetry = { [weak self] t in self?.updateStatusTitle(t) }
         ble.start()
         startCommandFileWatcher()
     }
@@ -453,6 +476,19 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "FunCooler — \(state)", action: nil, keyEquivalent: "")
         menu.addItem(.separator())
 
+        if let t = ble.latest {
+            telemetryItems = [
+                menu.addItem(withTitle: "", action: nil, keyEquivalent: ""),
+                menu.addItem(withTitle: "", action: nil, keyEquivalent: ""),
+                menu.addItem(withTitle: "", action: nil, keyEquivalent: ""),
+                menu.addItem(withTitle: "", action: nil, keyEquivalent: ""),
+            ]
+            applyTelemetry(t)
+            menu.addItem(.separator())
+        } else {
+            telemetryItems = []
+        }
+
         let attach = NSMenuItem(title: "Attach to cooler", action: #selector(doAttach), keyEquivalent: "a")
         attach.target = self
         attach.isEnabled = !ble.isConnectedToCooler
@@ -483,6 +519,23 @@ final class AppController: NSObject, NSApplicationDelegate {
         let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
         statusItem.menu = menu
+    }
+
+    /// Live readout next to the menu bar icon, plus the open menu's rows.
+    private func updateStatusTitle(_ t: Telemetry) {
+        if let btn = statusItem.button {
+            btn.title = " \(t.cold)°  \(t.rpm)rpm"
+            btn.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        }
+        if telemetryItems.isEmpty { rebuildMenu() } else { applyTelemetry(t) }
+    }
+
+    private func applyTelemetry(_ t: Telemetry) {
+        guard telemetryItems.count == 4 else { return }
+        telemetryItems[0].title = "Cold end     \(t.cold) °C"
+        telemetryItems[1].title = "Hot end      \(t.hot) °C"
+        telemetryItems[2].title = "Fan          \(t.rpm) RPM"
+        telemetryItems[3].title = "Power        \(t.watt) W"
     }
 
     @objc private func doAttach() { ble.attachToCooler() }

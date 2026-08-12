@@ -1,5 +1,6 @@
 import AppKit
 import CoreBluetooth
+import SwiftUI
 
 // FunCooler control — Discovery build.
 // A menu bar app that scans for the Black Shark FunCooler, connects, and dumps
@@ -513,7 +514,10 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         // Telemetry: 0x89 0x06 <flags> <rsvd> <cold> <hot> <rpm lo> <rpm hi> <watt>
         let b = [UInt8](d)
         if b.count >= 9, b[0] == 0x89, b[1] == 0x06 {
-            let t = Telemetry(cold: Int(b[4]), hot: Int(b[5]),
+            // Temperatures are signed: the cold plate drops below freezing, and
+            // an unsigned read turns -11 C into a nonsensical 245 C.
+            let t = Telemetry(cold: Int(Int8(bitPattern: b[4])),
+                              hot: Int(Int8(bitPattern: b[5])),
                               rpm: Int(b[6]) | (Int(b[7]) << 8),
                               watt: Int(b[8]), flags: b[2])
             latest = t
@@ -546,196 +550,127 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 }
 
-// MARK: - Menu views
+// MARK: - Control panel (SwiftUI)
 
-/// One type scale and one set of metrics for every row, so the panel reads as
-/// a single design rather than a pile of individually-styled controls.
-enum UI {
-    static let width: CGFloat = 264
-    static let inset: CGFloat = 16
+/// State shared with the SwiftUI panel. AppKit owns the BLE side and pushes
+/// values in here; the panel calls back when the user changes something.
+final class PanelModel: ObservableObject {
+    @Published var telemetry: Telemetry?
+    @Published var connected = false
+    @Published var failed = false
+    @Published var smartOn = true
+    @Published var level: Double = 3
+    @Published var ledOn = true
+    @Published var showStats = true
 
-    /// Small uppercase section label, letterspaced.
-    static func caption(_ text: String) -> NSTextField {
-        let f = NSTextField(labelWithString: "")
-        f.attributedStringValue = NSAttributedString(string: text, attributes: [
-            .font: NSFont.systemFont(ofSize: 9, weight: .semibold),
-            .foregroundColor: NSColor.tertiaryLabelColor,
-            .kern: 0.8,
-        ])
-        return f
-    }
-
-    /// Numeric readout. Monospaced digits keep columns from shifting.
-    static func value(_ text: String) -> NSTextField {
-        let f = NSTextField(labelWithString: text)
-        f.font = .monospacedDigitSystemFont(ofSize: 14, weight: .regular)
-        f.textColor = .labelColor
-        return f
-    }
-
-    /// Ordinary control label.
-    static func row(_ text: String) -> NSTextField {
-        let f = NSTextField(labelWithString: text)
-        f.font = .systemFont(ofSize: 12.5, weight: .regular)
-        f.textColor = .labelColor
-        return f
-    }
-
-    static func recolor(_ field: NSTextField, _ color: NSColor) {
-        guard let s = field.attributedStringValue.mutableCopy() as? NSMutableAttributedString else { return }
-        s.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: s.length))
-        field.attributedStringValue = s
-    }
+    var onSmart: ((Bool) -> Void)?
+    var onLevel: ((UInt8) -> Void)?
+    var onLED: ((Bool) -> Void)?
+    var onShowStats: ((Bool) -> Void)?
+    var onRetry: (() -> Void)?
 }
 
-/// Telemetry header: four readings in a 2×2 grid.
-final class StatsView: NSView {
-    private let values: [NSTextField]
-    private static let captions = ["COLD END", "FAN", "HOT END", "POWER"]
+/// The menu's contents. SwiftUI is used here deliberately: its Toggle and
+/// Slider render with the system's current control style (Liquid Glass on
+/// macOS 26+) while still accepting a tint, which NSSwitch does not allow.
+struct ControlPanel: View {
+    @ObservedObject var model: PanelModel
 
-    init() {
-        values = Self.captions.map { _ in UI.value("—") }
-        super.init(frame: NSRect(x: 0, y: 0, width: UI.width, height: 78))
+    private var smart: Binding<Bool> {
+        Binding(get: { model.smartOn }, set: { model.smartOn = $0; model.onSmart?($0) })
+    }
+    private var led: Binding<Bool> {
+        Binding(get: { model.ledOn }, set: { model.ledOn = $0; model.onLED?($0) })
+    }
+    private var stats: Binding<Bool> {
+        Binding(get: { model.showStats }, set: { model.showStats = $0; model.onShowStats?($0) })
+    }
+    private var level: Binding<Double> {
+        Binding(get: { model.level }, set: { new in
+            let old = UInt8(model.level.rounded())
+            model.level = new
+            let lvl = UInt8(new.rounded())
+            // Dragging fires continuously; only speak to the cooler on a change.
+            if lvl != old { model.onLevel?(lvl) }
+        })
+    }
 
-        let columns: [NSStackView] = (0..<2).map { col in
-            let cells: [NSView] = (0..<2).map { row in
-                let idx = row * 2 + col
-                let cell = NSStackView(views: [UI.caption(Self.captions[idx]), values[idx]])
-                cell.orientation = .vertical
-                cell.alignment = .leading
-                cell.spacing = 0
-                return cell
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            statsGrid
+
+            if !model.connected {
+                Divider()
+                HStack {
+                    Text(model.failed ? "Cooler disconnected" : "Connecting\u{2026}")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if model.failed {
+                        Button("Retry") { model.onRetry?() }.controlSize(.small)
+                    }
+                }
             }
-            let column = NSStackView(views: cells)
-            column.orientation = .vertical
-            column.alignment = .leading
-            column.spacing = 9
-            return column
+
+            Divider()
+
+            Toggle("Smart cooling", isOn: smart)
+                .disabled(!model.connected)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    caption("POWER LEVEL")
+                    Spacer()
+                    caption(String(Int(model.level.rounded())))
+                }
+                Slider(value: level, in: 1...5, step: 1)
+                    .disabled(!model.connected || model.smartOn)
+            }
+            .opacity(model.connected && !model.smartOn ? 1 : 0.5)
+
+            Divider()
+
+            Toggle("LED", isOn: led).disabled(!model.connected)
+            Toggle("Show stats in menu bar", isOn: stats)
         }
-
-        let grid = NSStackView(views: columns)
-        grid.orientation = .horizontal
-        grid.distribution = .fillEqually
-        grid.spacing = 12
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(grid)
-        NSLayoutConstraint.activate([
-            grid.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UI.inset),
-            grid.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UI.inset),
-            grid.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            grid.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-        ])
+        .font(.system(size: 12.5))
+        // Left untinted on purpose: macOS toggles follow the system accent
+        // colour and ignore .tint() by design (confirmed by Apple on the
+        // developer forums), so the switches match the rest of the system.
+        .toggleStyle(.switch)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(width: 250)
     }
-    required init?(coder: NSCoder) { fatalError() }
 
-    func update(_ t: Telemetry?) {
-        guard let t else {
-            values.forEach { $0.stringValue = "—" }
-            return
+    private var statsGrid: some View {
+        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
+            GridRow {
+                stat("COLD END", model.telemetry.map { "\($0.cold)\u{00B0}C" })
+                stat("FAN", model.telemetry.map { "\($0.rpm) rpm" })
+            }
+            GridRow {
+                stat("HOT END", model.telemetry.map { "\($0.hot)\u{00B0}C" })
+                stat("POWER", model.telemetry.map { "\($0.watt) W" })
+            }
         }
-        values[0].stringValue = "\(t.cold)°C"
-        values[1].stringValue = "\(t.rpm) rpm"
-        values[2].stringValue = "\(t.hot)°C"
-        values[3].stringValue = "\(t.watt) W"
+    }
+
+    private func stat(_ title: String, _ value: String?) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            caption(title)
+            Text(value ?? "\u{2014}").font(.system(size: 14).monospacedDigit())
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold))
+            .kerning(0.8)
+            .foregroundStyle(.tertiary)
     }
 }
 
-/// A label plus a switch. Living in a menu item's view means clicking it
-/// toggles in place instead of dismissing the menu.
-final class ToggleRowView: NSView {
-    let toggle = NSSwitch()
-    private let label: NSTextField
-
-    init(title: String) {
-        label = UI.row(title)
-        super.init(frame: NSRect(x: 0, y: 0, width: UI.width, height: 28))
-
-        // A regular NSSwitch is sized for a settings window and looks bloated
-        // in a menu. NSSwitch largely ignores controlSize, so pin the size:
-        // 30×17 matches the weight of 12.5pt text.
-        toggle.controlSize = .mini
-        toggle.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            toggle.widthAnchor.constraint(equalToConstant: 30),
-            toggle.heightAnchor.constraint(equalToConstant: 17),
-        ])
-
-        let stack = NSStackView(views: [label, NSView(), toggle])
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.distribution = .fill
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UI.inset),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UI.inset),
-            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
-        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    func setEnabled(_ on: Bool) {
-        toggle.isEnabled = on
-        label.textColor = on ? .labelColor : .disabledControlTextColor
-    }
-}
-
-/// The power-level slider: draggable, but snapped to the five levels the
-/// cooler accepts. Dimmed while Smart is driving the fan.
-final class LevelRowView: NSView {
-    let slider = NSSlider(value: 3, minValue: 1, maxValue: 5, target: nil, action: nil)
-    private let caption = UI.caption("POWER LEVEL")
-    private let value = UI.caption("3")
-
-    init() {
-        super.init(frame: NSRect(x: 0, y: 0, width: UI.width, height: 48))
-        value.alignment = .right
-
-        // Ticks keep it honest: the fan has five steps, so the knob lands on them.
-        slider.numberOfTickMarks = 5
-        slider.allowsTickMarkValuesOnly = true
-        slider.tickMarkPosition = .below
-        slider.isContinuous = true
-        slider.controlSize = .small
-
-        let header = NSStackView(views: [caption, NSView(), value])
-        header.orientation = .horizontal
-        header.alignment = .firstBaseline
-
-        let stack = NSStackView(views: [header, slider])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 1
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UI.inset),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UI.inset),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            header.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            slider.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    func setLevel(_ lvl: UInt8) {
-        slider.intValue = Int32(lvl)
-        value.attributedStringValue = NSAttributedString(
-            string: "\(lvl)",
-            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold),
-                         .foregroundColor: value.textColor ?? NSColor.tertiaryLabelColor,
-                         .kern: 0.8])
-    }
-
-    func setEnabled(_ on: Bool) {
-        slider.isEnabled = on
-        let tint: NSColor = on ? .tertiaryLabelColor : .quaternaryLabelColor
-        UI.recolor(caption, tint)
-        UI.recolor(value, tint)
-        alphaValue = on ? 1.0 : 0.55
-    }
-}
 
 // MARK: - App / menu bar UI
 
@@ -745,9 +680,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private var textView: NSTextView!
     private var hexField: NSTextField!
-    private weak var statsView: StatsView?
-    private weak var levelRow: LevelRowView?
-    private weak var smartRow: ToggleRowView?
+    private let model = PanelModel()
     private var currentMode: CoolingMode?
     private var currentLevel: UInt8 = 0
     // The cooler reports neither LED state nor mode, so track what we last set.
@@ -768,6 +701,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         ble.onTelemetry = { [weak self] t in self?.updateStatusTitle(t) }
         ble.onReady = { [weak self] in self?.applySavedSettings() }
         loadSettings()
+        wirePanel()
         ble.start()
         startCommandFileWatcher()
     }
@@ -807,82 +741,25 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func rebuildMenu() {
+        refreshStatusItem()
+        syncModel()
+
         let menu = NSMenu()
-        let connected = ble.isConnectedToCooler
-        refreshStatusItem()   // drop the readout when the link goes away
-
-        // Live readings.
-        let statsItem = NSMenuItem()
-        let stats = StatsView()
-        stats.update(connected ? ble.latest : nil)
-        statsItem.view = stats
-        statsView = stats
-        menu.addItem(statsItem)
-
-        // Connection state: silent when healthy, actionable when not.
-        if !connected {
-            let stopped = ble.connectFailed
-            let status = NSMenuItem(title: stopped ? "Cooler disconnected" : "Connecting…",
-                                    action: nil, keyEquivalent: "")
-            status.isEnabled = false
-            menu.addItem(status)
-            if stopped {
-                let retry = NSMenuItem(title: "Retry", action: #selector(doAttach), keyEquivalent: "r")
-                retry.target = self
-                menu.addItem(retry)
-            }
-        }
+        let panelItem = NSMenuItem()
+        let host = NSHostingView(rootView: ControlPanel(model: model))
+        host.frame = NSRect(origin: .zero, size: host.fittingSize)
+        panelItem.view = host
+        menu.addItem(panelItem)
         menu.addItem(.separator())
-
-        // Smart on → the cooler manages itself and the level row is inert.
-        let smartItem = NSMenuItem()
-        let smart = ToggleRowView(title: "Smart cooling")
-        smart.toggle.state = smartOn ? .on : .off
-        smart.toggle.target = self
-        smart.toggle.action = #selector(smartSwitched(_:))
-        smart.setEnabled(connected)
-        smartItem.view = smart
-        smartRow = smart
-        menu.addItem(smartItem)
-
-        let levelItem = NSMenuItem()
-        let row = LevelRowView()
-        row.slider.target = self
-        row.slider.action = #selector(levelChanged(_:))
-        row.setLevel(currentLevel == 0 ? 3 : currentLevel)
-        row.setEnabled(connected && !smartOn)
-        levelItem.view = row
-        levelRow = row
-        menu.addItem(levelItem)
-        menu.addItem(.separator())
-
-        let ledItem = NSMenuItem()
-        let led = ToggleRowView(title: "LED")
-        led.toggle.state = ledOn ? .on : .off
-        led.toggle.target = self
-        led.toggle.action = #selector(ledSwitched(_:))
-        led.setEnabled(connected)
-        ledItem.view = led
-        menu.addItem(ledItem)
-
-        let barItem = NSMenuItem()
-        let bar = ToggleRowView(title: "Show stats in menu bar")
-        bar.toggle.state = showStatsInBar ? .on : .off
-        bar.toggle.target = self
-        bar.toggle.action = #selector(barSwitched(_:))
-        barItem.view = bar
-        menu.addItem(barItem)
-        menu.addItem(.separator())
-
 
         // Debugging tools stay available but out of the way.
         let advanced = NSMenu()
-        let showLog = NSMenuItem(title: "Show Log Window", action: #selector(showLog), keyEquivalent: "l")
-        showLog.target = self
-        advanced.addItem(showLog)
+        let showLogItem = NSMenuItem(title: "Show Log Window", action: #selector(showLog), keyEquivalent: "l")
+        showLogItem.target = self
+        advanced.addItem(showLogItem)
         advanced.addItem(.separator())
         if ble.discovered.isEmpty {
-            advanced.addItem(withTitle: "Scanning…", action: nil, keyEquivalent: "")
+            advanced.addItem(withTitle: "Scanning\u{2026}", action: nil, keyEquivalent: "")
         } else {
             for (_, p) in ble.discovered {
                 let label = p.name ?? String(p.identifier.uuidString.prefix(8))
@@ -897,15 +774,67 @@ final class AppController: NSObject, NSApplicationDelegate {
         advancedItem.submenu = advanced
         menu.addItem(advancedItem)
 
-        let quit = NSMenuItem(title: "Quit FunCooler", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit FunCooler",
+                              action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
         statusItem.menu = menu
     }
 
+    /// Push current state into the panel. Publishing to the model updates an
+    /// open menu in place, rather than rebuilding it underneath the pointer.
+    private func syncModel() {
+        model.connected = ble.isConnectedToCooler
+        model.failed = ble.connectFailed
+        model.telemetry = ble.isConnectedToCooler ? ble.latest : nil
+        model.smartOn = smartOn
+        model.ledOn = ledOn
+        model.showStats = showStatsInBar
+        model.level = Double(currentLevel == 0 ? 3 : currentLevel)
+    }
+
+    private func wirePanel() {
+        model.onSmart = { [weak self] on in
+            guard let self else { return }
+            self.smartOn = on
+            if on {
+                self.ble.setMode(.smart)
+                self.currentMode = .smart
+            } else {
+                if self.currentLevel == 0 { self.currentLevel = 3 }
+                self.ble.setMode(.custom, level: self.currentLevel)
+                self.currentMode = .custom
+            }
+            self.saveSettings()
+        }
+        model.onLevel = { [weak self] lvl in
+            guard let self else { return }
+            self.currentLevel = lvl
+            self.currentMode = .custom
+            self.ble.setMode(.custom, level: lvl)
+            self.saveSettings()
+        }
+        model.onLED = { [weak self] on in
+            guard let self else { return }
+            self.ledOn = on
+            self.ble.setLED(on: on)
+            self.saveSettings()
+        }
+        model.onShowStats = { [weak self] on in
+            guard let self else { return }
+            self.showStatsInBar = on
+            self.refreshStatusItem()
+            self.saveSettings()
+        }
+        model.onRetry = { [weak self] in self?.ble.attachToCooler() }
+    }
+
+
     /// Refresh the menu bar button and the open menu's live rows.
     private func updateStatusTitle(_ t: Telemetry) {
         refreshStatusItem()
-        statsView?.update(t)
+        // Publishing into the model updates an already-open menu in place.
+        model.telemetry = t
+        model.connected = ble.isConnectedToCooler
     }
 
     /// The button shows the icon alone, or icon plus a compact readout.
@@ -956,50 +885,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             currentMode = .custom
         }
         ble.setLED(on: ledOn)
-        rebuildMenu()
+        syncModel()
     }
 
-    // These act on the menu's own views, so the menu stays open while the
-    // user flips Smart off and then reaches for the slider.
-
-    @objc private func ledSwitched(_ sender: NSSwitch) {
-        ledOn = sender.state == .on
-        ble.setLED(on: ledOn)
-        saveSettings()
-    }
-
-    /// Smart hands control back to the cooler; turning it off pins the fan to
-    /// the chosen level via Custom mode and wakes the slider.
-    @objc private func smartSwitched(_ sender: NSSwitch) {
-        smartOn = sender.state == .on
-        if smartOn {
-            ble.setMode(.smart)
-            currentMode = .smart
-        } else {
-            if currentLevel == 0 { currentLevel = 3 }
-            ble.setMode(.custom, level: currentLevel)
-            currentMode = .custom
-        }
-        levelRow?.setEnabled(ble.isConnectedToCooler && !smartOn)
-        saveSettings()
-    }
-
-    @objc private func levelChanged(_ sender: NSSlider) {
-        let lvl = UInt8(max(1, min(5, sender.intValue)))
-        levelRow?.setLevel(lvl)
-        // Dragging fires continuously; only talk to the cooler on a real change.
-        guard lvl != currentLevel else { return }
-        currentLevel = lvl
-        currentMode = .custom
-        ble.setMode(.custom, level: lvl)
-        saveSettings()
-    }
-
-    @objc private func barSwitched(_ sender: NSSwitch) {
-        showStatsInBar = sender.state == .on
-        refreshStatusItem()
-        saveSettings()
-    }
 
     @objc private func doAttach() { ble.attachToCooler() }
     @objc private func doDetach() { ble.detachFromCooler() }
@@ -1042,8 +930,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         textView.autoresizingMask = [.width, .height]
         scroll.documentView = textView
         content.addSubview(scroll)
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        // Built but left hidden: the log is a debugging aid, opened on
+        // demand from Advanced ▸ Show Log Window.
     }
 
     @objc private func sendHex() {

@@ -1,8 +1,8 @@
-# Black Shark MagCooler 5 Pro — BLE protocol notes
+# Black Shark MagCooler 5 Pro — BLE protocol
 
 Reverse-engineered against a real device (advertises as `Black Shark MagCooler 5pro`).
-Official app: Shark Arsenal (`com.blackshark.peripheral.community`), a Flutter iOS
-app running on Apple Silicon. Model family in-app: `br6x`.
+Commands below are **verified**: sent from this repo's app and confirmed by the
+cooler's own telemetry and by the official app's UI.
 
 ## Connection
 
@@ -10,145 +10,108 @@ app running on Apple Silicon. Model family in-app: `br6x`.
 |---|---|
 | Device name | `Black Shark MagCooler 5pro` |
 | Control service | `0000A0A0-3C17-D293-8E48-14FE2E4DA212` |
-| `A001` | writeWithoutResponse — **commands go here** |
-| `A002` | notify — telemetry + command replies |
-| `A003` | notify — events (nothing observed yet) |
-| OTA service | `00010203-0405-0607-0809-0A0B0C0D1912` — **do not poke** |
+| `A001` | writeWithoutResponse — commands |
+| `A002` | notify — telemetry and command replies |
+| `A003` | notify — events (nothing observed) |
+| OTA service | `00010203-0405-0607-0809-0A0B0C0D1912` — leave alone |
 
-No pairing, bonding, or encryption: reads and writes succeed with no auth.
-
-### Sharing the device with the official app
-
-The cooler accepts two centrals **only if the official app connects first**.
-Connect in Shark Arsenal, *then* attach our app (it uses
-`retrievePeripherals(withIdentifiers:)`). Attaching first locks the official app out.
+No pairing, bonding, or encryption.
 
 ## Frame format
 
-    [0]  0x80 | total_length     (0x80 bit set = message FROM device)
-    [1]  opcode
-    [2…] payload
+    host → device:   [total_length] [opcode] [payload…]
+    device → host:   [0x80 | total_length] [opcode] [payload…]
 
-Confirmed by observation: a 9-byte frame starts `0x89`, a 5-byte frame `0x85`,
-an 11-byte frame `0x8b`. Replies echo the opcode of the request.
+The length byte counts the whole frame including itself. A reply carries the
+same opcode as the request, so `05 06 …` is answered by `89 06 …` (0x80|9).
 
-Host→device frames use the same shape without the 0x80 bit: `[len][opcode][payload…]`.
-A bare `02 <opcode>` query is accepted and sometimes answered.
+**The length byte must be right.** Sending a 5-byte mode command instead of a
+6-byte one is parsed but rejected — this cost hours of guessing before the
+capture settled it.
 
-## Telemetry — opcode 0x06 (unsolicited, ~every 2s on A002)
+## Telemetry — opcode 0x06
+
+The cooler is **silent unless polled**. Ask for a frame:
+
+    05 06 20 00 00
+
+Reply (9 bytes):
 
     89 06 20 00 08 2b d4 0d 13
     ^^ ^^ ^^ ^^ ^^ ^^ ^^^^^ ^^
     |  |  |  |  |  |  |     device power, watts
-    |  |  |  |  |  |  fan RPM, uint16 LITTLE-endian (0x0DD4 = 3540)
+    |  |  |  |  |  |  fan RPM, uint16 little-endian (0x0DD4 = 3540)
     |  |  |  |  |  hot end temp, °C
     |  |  |  |  cold end temp, °C
-    |  |  |  reserved (always 0x00 seen)
-    |  |  flags/mode (always 0x20 seen, does not track power mode)
-    |  opcode 0x06
+    |  |  bytes 2–3 are echoed straight back from the request
+    |  opcode
     0x80 | 9
 
-Verified against the official app UI: Cold 9 °C / Hot 43 °C / 3540 RPM / 19 W.
+The official app polls this every 2 seconds. Bytes `20 00` are simply the
+request's parameters echoed — not flags, as first assumed.
 
-## Command acknowledgement — opcode 0x05
+## Set cooling mode — opcode 0x05
 
-After the official app changes a setting, the device emits:
+    06 05 00 00 <mode> <level>
 
-    85 05 00 00 01        # 01 = success
-
-Identical for every power mode, so it is a generic ACK, not a mode echo.
-
-## Power modes (observed effect, commands NOT yet known)
-
-| Mode | Fan RPM | Power |
+| mode | meaning | level |
 |---|---|---|
-| Silent | ~3540 | 19 W |
-| Smart (default) | 3540–4830 | 19 W |
-| Overclock | ~4890 | 34 W |
-| Custom | slider, 5 levels | 26 W at level 3 |
+| `01` | Overclock | `00` |
+| `02` | Smart | `00` |
+| `03` | Silent | `00` |
+| `04` | Custom | `01`–`05` (power level) |
 
-## Opcodes that answer a bare `02 <op>` query
+Reply `85 05 00 00 <status>`: **`01` accepted**, `00` rejected.
 
-Replies are intermittent and their payloads vary between identical queries, so
-these are recorded raw and not yet interpreted:
+Measured on the device:
 
-| Opcode | Example reply |
-|---|---|
-| 0x05 | `85 05 23 79 01` |
-| 0x21 | `85 21 08 3d 03`, `85 21 05 a8 00` |
-| 0x49 | `8b 49 07 a7 01 c7 08 a3 85 33 04` |
-| 0x61 | `85 61 0a e7 03` |
-| 0x86 | `89 86 21 c9 04 2d a2 12 1a` — tail matches telemetry fields |
-| 0xa5 | `85 a5 20 71 01` |
-| 0xab | `89 ab 14 7b 01 0f 00 00 00` |
-| 0xe1 | `85 e1 36 96 01` |
-| 0xe4 | `85 e4 0d 33 00` |
+| Command | Fan | Power |
+|---|---|---|
+| `06 05 00 00 01 00` Overclock | 4890 RPM | 34 W |
+| `06 05 00 00 02 00` Smart | 4440 RPM | 19 W |
+| `06 05 00 00 03 00` Silent | 3660 RPM | 19 W |
+| `06 05 00 00 04 05` Custom L5 | 5430 RPM | 35 W |
 
-## Probing opcode 0x05 (the likely command opcode)
+## Other frames seen at connect
 
-Sending `[len] 05 <param> <value>` to A001 gets back `85 05 <param> <value> <status>`
-— the device **echoes the payload back**. Two observations pin this down:
+The official app sends these once on connecting; their meaning is not yet decoded:
 
-- Repeating the *same* 3-byte frame `03 05 01` returned a different third byte each
-  time (`4d`, `1a`, `65`): the frame is one byte short, so the device echoes
-  uninitialised buffer memory.
-- Four-byte frames echo exactly what was sent (`04 05 01 00` → `85 05 01 00 00`,
-  `04 05 01 01` → `85 05 01 01 00`).
+    05 04 30 00 00
+    05 05 08 00 00
+    05 07 08 00 00
+    05 06 0a 00 00      # opcode 0x06 with a different parameter than 0x20
+    05 06 18 00 00
+    05 08 08 00 00
+    05 01 20 00 00
+    05 01 00 00 00      # sent when leaving the settings page
 
-The trailing byte looks like a status: every frame we constructed came back `00`,
-while the ACK produced by the *official* app is `85 05 00 00 01`. So `01` is
-presumably "accepted" and our frames are being rejected — something in the payload
-(a required value range, or a checksum/sequence field) is still missing.
+`05 06 0a 00 00` and `05 06 18 00 00` are telemetry reads with other parameters
+and are the obvious next thing to explore for more sensor data.
 
-Replies are also intermittent: frames with arbitrary payloads (`05 05 aa bb cc`)
-draw no reply at all, suggesting the device validates parameters and stays silent
-on invalid ones. That makes probe-and-observe an unreliable oracle.
+LED control was not captured (the LED page was inactive on this unit, which is in
+hardware "Standard" mode).
 
-## PacketLogger on macOS 27 — does not capture
+## Sharing the cooler with the official app
 
-`PacketLogger.app` (Additional Tools for Xcode 26) installs and runs, has the
-`com.apple.bluetooth.system` entitlement, and File ▸ New macOS Trace opens a live
-window — but it records **0 packets** while BLE telemetry is demonstrably flowing.
-No output on stderr, nothing in the unified log. Running it as root, or installing
-Apple's Bluetooth logging configuration profile, is the untested next step.
+Two centrals work **only if the official app connects first**; our app then
+attaches via `retrievePeripherals(withIdentifiers:)`. Attaching first locks the
+official app out. A phone counts as a separate host and takes the connection
+exclusively.
 
-## Open question — the write commands
+## How this was captured
 
-The exact bytes the official app writes to `A001` are still unknown. macOS blocks
-every free way to observe them for an iOS-on-Mac app:
+Every Apple-side capture route failed on macOS 27: PacketLogger recorded 0 packets
+for both macOS and iOS traces (even as root), `idevicebtlogger` connected but
+returned 0 bytes, `lldb` attach was denied, `DYLD_INSERT_LIBRARIES` was stripped by
+AMFI, and the unified log redacts ATT. Apple's Bluetooth logging profile is gated
+behind the paid developer program, and the GitHub copies are unsigned and therefore
+inert.
 
-- unified log redacts ATT traffic (`com.apple.bluetooth` yields nothing)
-- `lldb` attach is denied even though `Runner` is signed `flags=0x0`
-- `DYLD_INSERT_LIBRARIES` is stripped by AMFI / library validation
+What worked: **Android's built-in HCI snoop log**. Enable Developer options ▸
+"Bluetooth HCI snoop log", restart Bluetooth so it arms
+(`dumpsys bluetooth_manager` must show `sSnoopLogSettingAtEnable = FULL`), drive the
+official app on the phone, then:
 
-Remaining options: Apple's **PacketLogger** (free, in "Additional Tools for Xcode",
-needs an Apple ID) which records the exact writes; or continued probing of `A001`
-using the ACK + telemetry feedback loop.
-
-## Status byte confirmed (and why guessing fails)
-
-Sending `05 05 00 00 01` returns `85 05 00 00 00`. Bytes [2] and [3] are echoed
-from the request, but [4] is *not* an echo — we sent `01` and the device replied
-`00`. Since the official app's ACK for the same opcode ends in `01`, byte [4] is a
-result code: `01` accepted, `00` rejected.
-
-Our frames are therefore parsed but refused even with the same visible parameters,
-so the genuine command carries an additional field we cannot see — most likely a
-checksum, sequence counter, or session token. Brute-forcing that blind is not viable.
-
-## Capture avenues, all closed on this Mac
-
-| Route | Result |
-|---|---|
-| PacketLogger live macOS trace | 0 packets, even running as root |
-| Unified log (`com.apple.bluetooth`) | ATT traffic redacted |
-| `lldb` attach to Runner | denied by the system |
-| `DYLD_INSERT_LIBRARIES` hook | stripped by AMFI / library validation |
-| App's data container | TCC-protected, unreadable without Full Disk Access |
-
-### Most promising remaining route: capture from an iPhone
-
-PacketLogger has **File ▸ New iOS Trace**, which records Bluetooth traffic from a
-tethered iOS device. Installing Apple's Bluetooth logging profile on an iPhone,
-tethering it over USB, and driving Shark Arsenal *on the phone* would yield the
-exact writes that macOS refuses to expose locally.
+    adb bugreport out.zip
+    unzip -j out.zip 'FS/data/misc/bluetooth/logs/btsnoop_hci_*.log'
+    python3 tools/parse_btsnoop.py btsnoop_hci_*.log

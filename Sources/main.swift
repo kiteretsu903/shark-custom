@@ -65,6 +65,23 @@ func log(_ s: String) { Log.shared.line(s) }
 
 // MARK: - BLE
 
+/// Cooling modes, as sent in byte 4 of the 0x05 command.
+enum CoolingMode: UInt8, CaseIterable {
+    case overclock = 1
+    case smart     = 2
+    case silent    = 3
+    case custom    = 4
+
+    var label: String {
+        switch self {
+        case .overclock: return "Overclock"
+        case .smart:     return "Smart"
+        case .silent:    return "Silent"
+        case .custom:    return "Custom"
+        }
+    }
+}
+
 /// Decoded contents of the cooler's 0x06 telemetry frame.
 struct Telemetry {
     let cold: Int      // cold end temp, °C
@@ -85,6 +102,37 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     // Set once the cooler is connected, so we can send commands to A001.
     private(set) var writeChar: CBCharacteristic?
     var isConnectedToCooler: Bool { writeChar != nil }
+
+    // MARK: Cooler commands
+    //
+    // Host→device frames are [total_length][opcode][payload…]; the device
+    // replies with the same shape but 0x80 OR'd into the length byte.
+
+    /// Ask for one telemetry frame. The cooler only reports when polled.
+    func pollTelemetry() {
+        send(Data([0x05, 0x06, 0x20, 0x00, 0x00]))
+    }
+
+    /// Set the cooling mode. `level` applies to .custom only (1…5).
+    func setMode(_ mode: CoolingMode, level: UInt8 = 0) {
+        send(Data([0x06, 0x05, 0x00, 0x00, mode.rawValue, level]))
+    }
+
+    private var pollTimer: Timer?
+
+    func startPolling() {
+        pollTimer?.invalidate()
+        pollTelemetry()
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self, self.isConnectedToCooler else { return }
+            self.pollTelemetry()
+        }
+    }
+
+    func stopPolling() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+    }
 
     /// Send raw command bytes to the cooler's A001 write characteristic.
     func send(_ data: Data) {
@@ -117,6 +165,7 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     /// Release the cooler so the official app can connect freely.
     func detachFromCooler() {
         attached = false
+        stopPolling()
         writeChar = nil
         if let p = target ?? central.retrievePeripherals(withIdentifiers: [KNOWN_COOLER_UUID]).first {
             central.cancelPeripheralConnection(p)
@@ -355,6 +404,10 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                 if c.uuid.uuidString.uppercased() == "A001" {
                     writeChar = c
                     log("    ↑ captured A001 as the command write characteristic")
+                    // The cooler is silent unless polled, so drive it ourselves.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                        self?.startPolling()
+                    }
                 }
                 if c.properties.contains(.read) { p.readValue(for: c) }
                 if c.properties.contains(.notify) || c.properties.contains(.indicate) {
@@ -420,6 +473,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var textView: NSTextView!
     private var hexField: NSTextField!
     private var telemetryItems: [NSMenuItem] = []
+    private var currentMode: CoolingMode?
+    private var currentLevel: UInt8 = 0
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -497,7 +552,28 @@ final class AppController: NSObject, NSApplicationDelegate {
         detach.target = self
         menu.addItem(detach)
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Tip: connect in Shark Arsenal FIRST, then Attach", action: nil, keyEquivalent: "")
+
+        // Cooling modes — enabled once we hold the command characteristic.
+        menu.addItem(withTitle: "Cooling mode", action: nil, keyEquivalent: "")
+        for mode in CoolingMode.allCases where mode != .custom {
+            let item = NSMenuItem(title: "   \(mode.label)", action: #selector(pickMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = (currentMode == mode && currentLevel == 0) ? .on : .off
+            item.isEnabled = ble.isConnectedToCooler
+            menu.addItem(item)
+        }
+        let customMenu = NSMenu()
+        for lvl in UInt8(1)...UInt8(5) {
+            let li = NSMenuItem(title: "Level \(lvl)", action: #selector(pickCustom(_:)), keyEquivalent: "")
+            li.target = self
+            li.representedObject = lvl
+            li.state = (currentMode == .custom && currentLevel == lvl) ? .on : .off
+            customMenu.addItem(li)
+        }
+        let customItem = NSMenuItem(title: "   Custom", action: nil, keyEquivalent: "")
+        customItem.submenu = customMenu
+        menu.addItem(customItem)
         menu.addItem(.separator())
 
         if ble.discovered.isEmpty {
@@ -536,6 +612,23 @@ final class AppController: NSObject, NSApplicationDelegate {
         telemetryItems[1].title = "Hot end      \(t.hot) °C"
         telemetryItems[2].title = "Fan          \(t.rpm) RPM"
         telemetryItems[3].title = "Power        \(t.watt) W"
+    }
+
+    @objc private func pickMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? UInt8,
+              let mode = CoolingMode(rawValue: raw) else { return }
+        ble.setMode(mode)
+        currentMode = mode
+        currentLevel = 0
+        rebuildMenu()
+    }
+
+    @objc private func pickCustom(_ sender: NSMenuItem) {
+        guard let lvl = sender.representedObject as? UInt8 else { return }
+        ble.setMode(.custom, level: lvl)
+        currentMode = .custom
+        currentLevel = lvl
+        rebuildMenu()
     }
 
     @objc private func doAttach() { ble.attachToCooler() }

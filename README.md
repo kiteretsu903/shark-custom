@@ -7,6 +7,15 @@ control — without the official app.
 The cooler speaks an undocumented BLE protocol. It was reverse-engineered from
 scratch for this app; the full write-up is in [PROTOCOL.md](PROTOCOL.md).
 
+## Why
+
+The MacBook Air M4 is fanless: it cools passively, so under sustained load it
+throttles once the chassis heats up. This magnetic phone cooler turns out to work
+just as well stuck to the bottom of the Air — its Peltier cold plate pulls heat
+straight out of the case. The only problem was that controlling it required the
+official phone app; this project removes that dependency so the cooler can live
+on the Mac it is cooling.
+
 ```
 COLD END   8°C        FAN     4770 rpm
 HOT END   43°C        POWER     26 W

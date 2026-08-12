@@ -94,6 +94,8 @@ struct Telemetry {
 final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     private(set) var latest: Telemetry?
     var onTelemetry: ((Telemetry) -> Void)?
+    /// Fires once the command characteristic is live and commands may be sent.
+    var onReady: (() -> Void)?
     private var central: CBCentralManager!
     private var target: CBPeripheral?
     private(set) var discovered: [UUID: CBPeripheral] = [:]
@@ -129,10 +131,15 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     func startPolling() {
         pollTimer?.invalidate()
         pollTelemetry()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
             guard let self, self.isConnectedToCooler else { return }
             self.pollTelemetry()
         }
+        // .common keeps it running while a menu is open — otherwise the run
+        // loop switches to event-tracking mode and the readings freeze exactly
+        // when the user is looking at them.
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
     }
 
     func stopPolling() {
@@ -437,6 +444,7 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
                     // The cooler is silent unless polled, so drive it ourselves.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                         self?.startPolling()
+                        self?.onReady?()
                     }
                 }
                 if c.properties.contains(.read) { p.readValue(for: c) }
@@ -557,40 +565,97 @@ final class StatsView: NSView {
     }
 }
 
-/// The power-level "slider": five discrete steps, greyed out while Smart is on.
+/// A label plus a switch. Living in a menu item's view means clicking it
+/// toggles in place instead of dismissing the menu.
+final class ToggleRowView: NSView {
+    let toggle = NSSwitch()
+    private let label: NSTextField
+
+    init(title: String, width: CGFloat = 260) {
+        label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 13)
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 32))
+
+        let stack = NSStackView(views: [label, NSView(), toggle])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.distribution = .fill
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func setEnabled(_ on: Bool) {
+        toggle.isEnabled = on
+        label.textColor = on ? .labelColor : .disabledControlTextColor
+    }
+}
+
+/// The power-level slider: continuous to drag, but snapped to the five levels
+/// the cooler actually accepts. Dimmed while Smart is driving the fan.
 final class LevelRowView: NSView {
-    let segmented = NSSegmentedControl(labels: ["1", "2", "3", "4", "5"],
-                                       trackingMode: .selectOne,
-                                       target: nil, action: nil)
+    let slider = NSSlider(value: 3, minValue: 1, maxValue: 5, target: nil, action: nil)
     private let caption = NSTextField(labelWithString: "POWER LEVEL")
+    private let value = NSTextField(labelWithString: "3")
 
     init(width: CGFloat = 260) {
-        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 58))
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 56))
         caption.font = .systemFont(ofSize: 9, weight: .semibold)
         caption.textColor = .tertiaryLabelColor
-        segmented.segmentDistribution = .fillEqually
+        value.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        value.textColor = .secondaryLabelColor
+        value.alignment = .right
 
-        let stack = NSStackView(views: [caption, segmented])
+        // Ticks keep it honest: the fan has five steps, so the knob lands on them.
+        slider.numberOfTickMarks = 5
+        slider.allowsTickMarkValuesOnly = true
+        slider.tickMarkPosition = .below
+        slider.isContinuous = true
+        slider.controlSize = .small
+
+        let header = NSStackView(views: [caption, NSView(), value])
+        header.orientation = .horizontal
+        header.alignment = .firstBaseline
+
+        let stack = NSStackView(views: [header, slider])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 4
+        stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            segmented.heightAnchor.constraint(equalToConstant: 24),
+            header.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            slider.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Dim the whole row, caption included, when the control is unavailable.
-    func setEnabled(_ on: Bool) {
-        segmented.isEnabled = on
-        caption.textColor = on ? .tertiaryLabelColor : .quaternaryLabelColor
-        alphaValue = on ? 1.0 : 0.55
+    var level: UInt8 { UInt8(slider.intValue.clamped(1, 5)) }
+
+    func setLevel(_ lvl: UInt8) {
+        slider.intValue = Int32(lvl)
+        value.stringValue = "\(lvl)"
     }
+
+    func setEnabled(_ on: Bool) {
+        slider.isEnabled = on
+        caption.textColor = on ? .tertiaryLabelColor : .quaternaryLabelColor
+        value.textColor = on ? .secondaryLabelColor : .quaternaryLabelColor
+        alphaValue = on ? 1.0 : 0.5
+    }
+}
+
+private extension Int32 {
+    func clamped(_ lo: Int32, _ hi: Int32) -> Int32 { Swift.min(Swift.max(self, lo), hi) }
 }
 
 // MARK: - App / menu bar UI
@@ -603,6 +668,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var hexField: NSTextField!
     private weak var statsView: StatsView?
     private weak var levelRow: LevelRowView?
+    private weak var smartRow: ToggleRowView?
     private var currentMode: CoolingMode?
     private var currentLevel: UInt8 = 0
     // The cooler reports neither LED state nor mode, so track what we last set.
@@ -621,6 +687,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         Log.shared.sink = { [weak self] line in self?.append(line) }
         ble.onDevices = { [weak self] in self?.rebuildMenu() }
         ble.onTelemetry = { [weak self] t in self?.updateStatusTitle(t) }
+        ble.onReady = { [weak self] in self?.applySavedSettings() }
+        loadSettings()
         ble.start()
         startCommandFileWatcher()
     }
@@ -686,34 +754,43 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         // Smart on → the cooler manages itself and the level row is inert.
-        let smart = NSMenuItem(title: "Smart cooling", action: #selector(toggleSmart), keyEquivalent: "")
-        smart.target = self
-        smart.state = smartOn ? .on : .off
-        smart.isEnabled = connected
-        menu.addItem(smart)
+        let smartItem = NSMenuItem()
+        let smart = ToggleRowView(title: "Smart cooling")
+        smart.toggle.state = smartOn ? .on : .off
+        smart.toggle.target = self
+        smart.toggle.action = #selector(smartSwitched(_:))
+        smart.setEnabled(connected)
+        smartItem.view = smart
+        smartRow = smart
+        menu.addItem(smartItem)
 
         let levelItem = NSMenuItem()
         let row = LevelRowView()
-        row.segmented.target = self
-        row.segmented.action = #selector(levelChanged(_:))
-        row.segmented.selectedSegment = Int(currentLevel == 0 ? 3 : currentLevel) - 1
+        row.slider.target = self
+        row.slider.action = #selector(levelChanged(_:))
+        row.setLevel(currentLevel == 0 ? 3 : currentLevel)
         row.setEnabled(connected && !smartOn)
         levelItem.view = row
         levelRow = row
         menu.addItem(levelItem)
         menu.addItem(.separator())
 
-        let led = NSMenuItem(title: "LED", action: #selector(toggleLED), keyEquivalent: "")
-        led.target = self
-        led.state = ledOn ? .on : .off
-        led.isEnabled = connected
-        menu.addItem(led)
+        let ledItem = NSMenuItem()
+        let led = ToggleRowView(title: "LED")
+        led.toggle.state = ledOn ? .on : .off
+        led.toggle.target = self
+        led.toggle.action = #selector(ledSwitched(_:))
+        led.setEnabled(connected)
+        ledItem.view = led
+        menu.addItem(ledItem)
 
-        let statsToggle = NSMenuItem(title: "Show stats in menu bar",
-                                     action: #selector(toggleStatsInBar), keyEquivalent: "")
-        statsToggle.target = self
-        statsToggle.state = showStatsInBar ? .on : .off
-        menu.addItem(statsToggle)
+        let barItem = NSMenuItem()
+        let bar = ToggleRowView(title: "Show stats in menu bar")
+        bar.toggle.state = showStatsInBar ? .on : .off
+        bar.toggle.target = self
+        bar.toggle.action = #selector(barSwitched(_:))
+        barItem.view = bar
+        menu.addItem(barItem)
         menu.addItem(.separator())
 
 
@@ -765,16 +842,55 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func toggleLED() {
-        ledOn.toggle()
+    // MARK: Settings
+    //
+    // The cooler reports neither its mode nor its LED state, so the app is the
+    // only memory of them. Persist the choices and re-apply on connect, which
+    // keeps what the menu shows and what the hardware is doing in agreement.
+
+    private func loadSettings() {
+        let d = UserDefaults.standard
+        d.register(defaults: ["smartOn": true, "ledOn": true,
+                              "showStatsInBar": true, "level": 3])
+        smartOn = d.bool(forKey: "smartOn")
+        ledOn = d.bool(forKey: "ledOn")
+        showStatsInBar = d.bool(forKey: "showStatsInBar")
+        currentLevel = UInt8(max(1, min(5, d.integer(forKey: "level"))))
+    }
+
+    private func saveSettings() {
+        let d = UserDefaults.standard
+        d.set(smartOn, forKey: "smartOn")
+        d.set(ledOn, forKey: "ledOn")
+        d.set(showStatsInBar, forKey: "showStatsInBar")
+        d.set(Int(currentLevel), forKey: "level")
+    }
+
+    private func applySavedSettings() {
+        if smartOn {
+            ble.setMode(.smart)
+            currentMode = .smart
+        } else {
+            ble.setMode(.custom, level: currentLevel)
+            currentMode = .custom
+        }
         ble.setLED(on: ledOn)
         rebuildMenu()
     }
 
+    // These act on the menu's own views, so the menu stays open while the
+    // user flips Smart off and then reaches for the slider.
+
+    @objc private func ledSwitched(_ sender: NSSwitch) {
+        ledOn = sender.state == .on
+        ble.setLED(on: ledOn)
+        saveSettings()
+    }
+
     /// Smart hands control back to the cooler; turning it off pins the fan to
-    /// the chosen level via Custom mode.
-    @objc private func toggleSmart() {
-        smartOn.toggle()
+    /// the chosen level via Custom mode and wakes the slider.
+    @objc private func smartSwitched(_ sender: NSSwitch) {
+        smartOn = sender.state == .on
         if smartOn {
             ble.setMode(.smart)
             currentMode = .smart
@@ -783,22 +899,25 @@ final class AppController: NSObject, NSApplicationDelegate {
             ble.setMode(.custom, level: currentLevel)
             currentMode = .custom
         }
-        rebuildMenu()
+        levelRow?.setEnabled(ble.isConnectedToCooler && !smartOn)
+        saveSettings()
     }
 
-    @objc private func levelChanged(_ sender: NSSegmentedControl) {
-        let lvl = UInt8(sender.selectedSegment + 1)
+    @objc private func levelChanged(_ sender: NSSlider) {
+        let lvl = UInt8(max(1, min(5, sender.intValue)))
+        levelRow?.setLevel(lvl)
+        // Dragging fires continuously; only talk to the cooler on a real change.
+        guard lvl != currentLevel else { return }
         currentLevel = lvl
-        smartOn = false
         currentMode = .custom
         ble.setMode(.custom, level: lvl)
-        rebuildMenu()
+        saveSettings()
     }
 
-    @objc private func toggleStatsInBar() {
-        showStatsInBar.toggle()
+    @objc private func barSwitched(_ sender: NSSwitch) {
+        showStatsInBar = sender.state == .on
         refreshStatusItem()
-        rebuildMenu()
+        saveSettings()
     }
 
     @objc private func doAttach() { ble.attachToCooler() }

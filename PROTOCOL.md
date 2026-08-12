@@ -124,3 +124,31 @@ every free way to observe them for an iOS-on-Mac app:
 Remaining options: Apple's **PacketLogger** (free, in "Additional Tools for Xcode",
 needs an Apple ID) which records the exact writes; or continued probing of `A001`
 using the ACK + telemetry feedback loop.
+
+## Status byte confirmed (and why guessing fails)
+
+Sending `05 05 00 00 01` returns `85 05 00 00 00`. Bytes [2] and [3] are echoed
+from the request, but [4] is *not* an echo — we sent `01` and the device replied
+`00`. Since the official app's ACK for the same opcode ends in `01`, byte [4] is a
+result code: `01` accepted, `00` rejected.
+
+Our frames are therefore parsed but refused even with the same visible parameters,
+so the genuine command carries an additional field we cannot see — most likely a
+checksum, sequence counter, or session token. Brute-forcing that blind is not viable.
+
+## Capture avenues, all closed on this Mac
+
+| Route | Result |
+|---|---|
+| PacketLogger live macOS trace | 0 packets, even running as root |
+| Unified log (`com.apple.bluetooth`) | ATT traffic redacted |
+| `lldb` attach to Runner | denied by the system |
+| `DYLD_INSERT_LIBRARIES` hook | stripped by AMFI / library validation |
+| App's data container | TCC-protected, unreadable without Full Disk Access |
+
+### Most promising remaining route: capture from an iPhone
+
+PacketLogger has **File ▸ New iOS Trace**, which records Bluetooth traffic from a
+tethered iOS device. Installing Apple's Bluetooth logging profile on an iPhone,
+tethering it over USB, and driving Shark Arsenal *on the phone* would yield the
+exact writes that macOS refuses to expose locally.

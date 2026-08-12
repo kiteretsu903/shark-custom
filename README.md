@@ -118,6 +118,10 @@ locked out. A phone takes the connection exclusively.
 | `tools/watch.py` | Tails the log and surfaces protocol changes |
 | `docs_gatt_dump.txt` | Raw GATT dump from the first successful connection |
 
+## License
+
+[MIT](LICENSE).
+
 ## Disclaimer
 
 Unofficial and unaffiliated with Black Shark. Built for personal use with hardware

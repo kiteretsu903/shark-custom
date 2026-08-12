@@ -190,6 +190,8 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     /// True once a connection attempt has given up; drives the Retry button.
     private(set) var connectFailed = false
     private var connectWatchdog: DispatchWorkItem?
+    /// Spent after one silent reconnect, so a dead cooler cannot loop forever.
+    private var autoReconnectUsed = false
 
     /// Attach to the known cooler, giving up after a timeout so the UI can
     /// offer a retry rather than spinning forever.
@@ -209,9 +211,13 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         connectWatchdog?.cancel()
         let watchdog = DispatchWorkItem { [weak self] in
             guard let self, !self.isConnectedToCooler else { return }
-            log("Connection timed out — cooler may be off or out of range.")
-            self.connectFailed = true
+            log("Connection timed out — giving up. Use Retry when the cooler is back.")
+            // Stand down completely: cancel the pending connect and clear
+            // `attached` so nothing schedules another attempt behind the user's
+            // back. Only the Retry button starts a new one.
             self.central.cancelPeripheralConnection(cooler)
+            self.attached = false
+            self.connectFailed = true
             self.onDevices?()
         }
         connectWatchdog = watchdog
@@ -389,14 +395,29 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func centralManager(_ c: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
         log("Disconnected \(p.identifier): \(error?.localizedDescription ?? "clean")")
-        // Only auto-reconnect while the user wants us attached.
-        if attached && (p.identifier == KNOWN_COOLER_UUID || target?.identifier == p.identifier) {
-            writeChar = nil
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                guard let self else { return }
-                log("Re-attaching to cooler …")
-                self.connect(p)
-            }
+        guard p.identifier == KNOWN_COOLER_UUID || target?.identifier == p.identifier else { return }
+
+        // Drop stale state so the UI shows what is actually true right now.
+        stopPolling()
+        writeChar = nil
+        latest = nil
+        sendQueue.removeAll()
+        onDevices?()
+
+        guard attached else { return }
+        if autoReconnectUsed {
+            // One attempt was already spent: stop and let the user decide.
+            log("Cooler still unreachable — stopping. Use Retry.")
+            attached = false
+            connectFailed = true
+            onDevices?()
+            return
+        }
+        autoReconnectUsed = true
+        log("Lost the cooler — one automatic reconnect attempt …")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.attached else { return }
+            self.attachToCooler()
         }
     }
 
@@ -438,6 +459,7 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         if cooler {
             connectWatchdog?.cancel()
             connectFailed = false
+            autoReconnectUsed = false   // a good link re-arms the one free retry
             foundCooler = true
             target = p
             currentProbe = nil
@@ -787,6 +809,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func rebuildMenu() {
         let menu = NSMenu()
         let connected = ble.isConnectedToCooler
+        refreshStatusItem()   // drop the readout when the link goes away
 
         // Live readings.
         let statsItem = NSMenuItem()
@@ -798,12 +821,13 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         // Connection state: silent when healthy, actionable when not.
         if !connected {
-            let msg = ble.connectFailed ? "Cooler not found" : "Connecting…"
-            let status = NSMenuItem(title: "   \(msg)", action: nil, keyEquivalent: "")
+            let stopped = ble.connectFailed
+            let status = NSMenuItem(title: stopped ? "Cooler disconnected" : "Connecting…",
+                                    action: nil, keyEquivalent: "")
             status.isEnabled = false
             menu.addItem(status)
-            if ble.connectFailed {
-                let retry = NSMenuItem(title: "   Retry", action: #selector(doAttach), keyEquivalent: "r")
+            if stopped {
+                let retry = NSMenuItem(title: "Retry", action: #selector(doAttach), keyEquivalent: "r")
                 retry.target = self
                 menu.addItem(retry)
             }

@@ -74,11 +74,16 @@ Measured on the device:
 
 ## LED on/off — opcode 0x01
 
-    05 01 00 00 03      # lighting on
-    05 01 00 00 00      # lighting off
+    05 01 00 00 00      # lighting on  ("Standard" mode)
+    05 01 00 00 03      # lighting off
 
-Reply `85 01 00 00 01` (`01` accepted). The cooler does not report LED state in
-telemetry, so a client has to remember what it last set. Colour and effect
+Reply `85 01 00 00 01` (`01` accepted). Note the polarity: the capture showed
+`03` sent first and `00` second, which suggested `03` = on — but checking the
+actual lamp proved the reverse. Byte 4 is a lighting *mode*, where `00` is the
+default "Standard" appearance and `03` means off.
+
+The cooler does not report LED state in telemetry, so a client has to remember
+what it last set. Colour and effect
 selection were not captured — only the on/off pair, which is all that was needed.
 
 ## Other frames seen at connect

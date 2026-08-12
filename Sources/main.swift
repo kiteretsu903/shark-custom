@@ -120,10 +120,11 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         send(Data([0x06, 0x05, 0x00, 0x00, mode.rawValue, level]))
     }
 
-    /// Turn the RGB lighting on or off. 0x03 is the lighting mode the official
-    /// app restores when switching the LED back on; 0x00 is off.
+    /// Turn the RGB lighting on or off. Verified against the hardware: 0x00 is
+    /// the "Standard" lighting mode (on) and 0x03 switches it off — the reverse
+    /// of what the capture order first suggested.
     func setLED(on: Bool) {
-        send(Data([0x05, 0x01, 0x00, 0x00, on ? 0x03 : 0x00]))
+        send(Data([0x05, 0x01, 0x00, 0x00, on ? 0x00 : 0x03]))
     }
 
     private var pollTimer: Timer?
@@ -147,15 +148,36 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         pollTimer = nil
     }
 
-    /// Send raw command bytes to the cooler's A001 write characteristic.
+    // A001 is write-without-response: no flow control, so back-to-back writes
+    // can be dropped while the cooler digests the previous one. Queue them and
+    // pace them out instead of firing everything at once.
+    private var sendQueue: [Data] = []
+    private var draining = false
+    private static let sendGap = 0.18
+
+    /// Queue raw command bytes for the cooler's A001 write characteristic.
     func send(_ data: Data) {
-        guard let p = target, let ch = writeChar else {
+        guard isConnectedToCooler else {
             log("send: not connected to cooler yet."); return
         }
+        sendQueue.append(data)
+        drainQueue()
+    }
+
+    private func drainQueue() {
+        guard !draining, !sendQueue.isEmpty else { return }
+        guard let p = target, let ch = writeChar else { sendQueue.removeAll(); return }
+        draining = true
+        let data = sendQueue.removeFirst()
         let type: CBCharacteristicWriteType =
             ch.properties.contains(.write) ? .withResponse : .withoutResponse
         p.writeValue(data, for: ch, type: type)
         log("→ SENT to A001: \(data.map { String(format: "%02x", $0) }.joined(separator: " "))")
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.sendGap) { [weak self] in
+            guard let self else { return }
+            self.draining = false
+            self.drainQueue()
+        }
     }
 
     func start() {
@@ -504,51 +526,82 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
 
 // MARK: - Menu views
 
-/// Telemetry header: four readings in a 2×2 grid, values in aligned
-/// monospaced digits so they don't jitter as the numbers change.
+/// One type scale and one set of metrics for every row, so the panel reads as
+/// a single design rather than a pile of individually-styled controls.
+enum UI {
+    static let width: CGFloat = 264
+    static let inset: CGFloat = 16
+
+    /// Small uppercase section label, letterspaced.
+    static func caption(_ text: String) -> NSTextField {
+        let f = NSTextField(labelWithString: "")
+        f.attributedStringValue = NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 9, weight: .semibold),
+            .foregroundColor: NSColor.tertiaryLabelColor,
+            .kern: 0.8,
+        ])
+        return f
+    }
+
+    /// Numeric readout. Monospaced digits keep columns from shifting.
+    static func value(_ text: String) -> NSTextField {
+        let f = NSTextField(labelWithString: text)
+        f.font = .monospacedDigitSystemFont(ofSize: 14, weight: .regular)
+        f.textColor = .labelColor
+        return f
+    }
+
+    /// Ordinary control label.
+    static func row(_ text: String) -> NSTextField {
+        let f = NSTextField(labelWithString: text)
+        f.font = .systemFont(ofSize: 12.5, weight: .regular)
+        f.textColor = .labelColor
+        return f
+    }
+
+    static func recolor(_ field: NSTextField, _ color: NSColor) {
+        guard let s = field.attributedStringValue.mutableCopy() as? NSMutableAttributedString else { return }
+        s.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: s.length))
+        field.attributedStringValue = s
+    }
+}
+
+/// Telemetry header: four readings in a 2×2 grid.
 final class StatsView: NSView {
     private let values: [NSTextField]
     private static let captions = ["COLD END", "FAN", "HOT END", "POWER"]
 
     init() {
-        values = Self.captions.map { _ in
-            let f = NSTextField(labelWithString: "—")
-            f.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
-            f.textColor = .labelColor
-            return f
-        }
-        super.init(frame: NSRect(x: 0, y: 0, width: 260, height: 84))
+        values = Self.captions.map { _ in UI.value("—") }
+        super.init(frame: NSRect(x: 0, y: 0, width: UI.width, height: 78))
 
         let columns: [NSStackView] = (0..<2).map { col in
             let cells: [NSView] = (0..<2).map { row in
                 let idx = row * 2 + col
-                let caption = NSTextField(labelWithString: Self.captions[idx])
-                caption.font = .systemFont(ofSize: 9, weight: .semibold)
-                caption.textColor = .tertiaryLabelColor
-                let cell = NSStackView(views: [caption, values[idx]])
+                let cell = NSStackView(views: [UI.caption(Self.captions[idx]), values[idx]])
                 cell.orientation = .vertical
                 cell.alignment = .leading
-                cell.spacing = 1
+                cell.spacing = 0
                 return cell
             }
             let column = NSStackView(views: cells)
             column.orientation = .vertical
             column.alignment = .leading
-            column.spacing = 10
+            column.spacing = 9
             return column
         }
 
         let grid = NSStackView(views: columns)
         grid.orientation = .horizontal
         grid.distribution = .fillEqually
-        grid.spacing = 18
+        grid.spacing = 12
         grid.translatesAutoresizingMaskIntoConstraints = false
         addSubview(grid)
         NSLayoutConstraint.activate([
-            grid.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            grid.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
-            grid.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            grid.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            grid.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UI.inset),
+            grid.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UI.inset),
+            grid.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            grid.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -571,10 +624,19 @@ final class ToggleRowView: NSView {
     let toggle = NSSwitch()
     private let label: NSTextField
 
-    init(title: String, width: CGFloat = 260) {
-        label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 13)
-        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 32))
+    init(title: String) {
+        label = UI.row(title)
+        super.init(frame: NSRect(x: 0, y: 0, width: UI.width, height: 28))
+
+        // A regular NSSwitch is sized for a settings window and looks bloated
+        // in a menu. NSSwitch largely ignores controlSize, so pin the size:
+        // 30×17 matches the weight of 12.5pt text.
+        toggle.controlSize = .mini
+        toggle.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            toggle.widthAnchor.constraint(equalToConstant: 30),
+            toggle.heightAnchor.constraint(equalToConstant: 17),
+        ])
 
         let stack = NSStackView(views: [label, NSView(), toggle])
         stack.orientation = .horizontal
@@ -583,8 +645,8 @@ final class ToggleRowView: NSView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UI.inset),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UI.inset),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         label.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -597,19 +659,15 @@ final class ToggleRowView: NSView {
     }
 }
 
-/// The power-level slider: continuous to drag, but snapped to the five levels
-/// the cooler actually accepts. Dimmed while Smart is driving the fan.
+/// The power-level slider: draggable, but snapped to the five levels the
+/// cooler accepts. Dimmed while Smart is driving the fan.
 final class LevelRowView: NSView {
     let slider = NSSlider(value: 3, minValue: 1, maxValue: 5, target: nil, action: nil)
-    private let caption = NSTextField(labelWithString: "POWER LEVEL")
-    private let value = NSTextField(labelWithString: "3")
+    private let caption = UI.caption("POWER LEVEL")
+    private let value = UI.caption("3")
 
-    init(width: CGFloat = 260) {
-        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 56))
-        caption.font = .systemFont(ofSize: 9, weight: .semibold)
-        caption.textColor = .tertiaryLabelColor
-        value.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
-        value.textColor = .secondaryLabelColor
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: UI.width, height: 48))
         value.alignment = .right
 
         // Ticks keep it honest: the fan has five steps, so the knob lands on them.
@@ -626,36 +684,35 @@ final class LevelRowView: NSView {
         let stack = NSStackView(views: [header, slider])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 2
+        stack.spacing = 1
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UI.inset),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UI.inset),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 2),
             header.widthAnchor.constraint(equalTo: stack.widthAnchor),
             slider.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    var level: UInt8 { UInt8(slider.intValue.clamped(1, 5)) }
-
     func setLevel(_ lvl: UInt8) {
         slider.intValue = Int32(lvl)
-        value.stringValue = "\(lvl)"
+        value.attributedStringValue = NSAttributedString(
+            string: "\(lvl)",
+            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold),
+                         .foregroundColor: value.textColor ?? NSColor.tertiaryLabelColor,
+                         .kern: 0.8])
     }
 
     func setEnabled(_ on: Bool) {
         slider.isEnabled = on
-        caption.textColor = on ? .tertiaryLabelColor : .quaternaryLabelColor
-        value.textColor = on ? .secondaryLabelColor : .quaternaryLabelColor
-        alphaValue = on ? 1.0 : 0.5
+        let tint: NSColor = on ? .tertiaryLabelColor : .quaternaryLabelColor
+        UI.recolor(caption, tint)
+        UI.recolor(value, tint)
+        alphaValue = on ? 1.0 : 0.55
     }
-}
-
-private extension Int32 {
-    func clamped(_ lo: Int32, _ hi: Int32) -> Int32 { Swift.min(Swift.max(self, lo), hi) }
 }
 
 // MARK: - App / menu bar UI

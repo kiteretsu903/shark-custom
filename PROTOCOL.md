@@ -84,6 +84,34 @@ these are recorded raw and not yet interpreted:
 | 0xe1 | `85 e1 36 96 01` |
 | 0xe4 | `85 e4 0d 33 00` |
 
+## Probing opcode 0x05 (the likely command opcode)
+
+Sending `[len] 05 <param> <value>` to A001 gets back `85 05 <param> <value> <status>`
+— the device **echoes the payload back**. Two observations pin this down:
+
+- Repeating the *same* 3-byte frame `03 05 01` returned a different third byte each
+  time (`4d`, `1a`, `65`): the frame is one byte short, so the device echoes
+  uninitialised buffer memory.
+- Four-byte frames echo exactly what was sent (`04 05 01 00` → `85 05 01 00 00`,
+  `04 05 01 01` → `85 05 01 01 00`).
+
+The trailing byte looks like a status: every frame we constructed came back `00`,
+while the ACK produced by the *official* app is `85 05 00 00 01`. So `01` is
+presumably "accepted" and our frames are being rejected — something in the payload
+(a required value range, or a checksum/sequence field) is still missing.
+
+Replies are also intermittent: frames with arbitrary payloads (`05 05 aa bb cc`)
+draw no reply at all, suggesting the device validates parameters and stays silent
+on invalid ones. That makes probe-and-observe an unreliable oracle.
+
+## PacketLogger on macOS 27 — does not capture
+
+`PacketLogger.app` (Additional Tools for Xcode 26) installs and runs, has the
+`com.apple.bluetooth.system` entitlement, and File ▸ New macOS Trace opens a live
+window — but it records **0 packets** while BLE telemetry is demonstrably flowing.
+No output on stderr, nothing in the unified log. Running it as root, or installing
+Apple's Bluetooth logging configuration profile, is the untested next step.
+
 ## Open question — the write commands
 
 The exact bytes the official app writes to `A001` are still unknown. macOS blocks

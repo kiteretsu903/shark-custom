@@ -1,0 +1,61 @@
+[17:10:09.249] Bluetooth on. Collecting devices for 5s before probing …
+[17:10:09.292] Found -85 dBm  ABCE8BB8-4E5B-5A5B-9892-AC82616AF287  (no name)  mfg(company=0x004c)=[4c 00 10 06 35 1e a8 ee 00 61]
+[17:10:09.319] Found -51 dBm  3419DE1D-E9C6-E781-9D55-615AA8A7F495  Bozhen’s iPhone  mfg(company=0x004c)=[4c 00 10 06 3e 1e 87 ec fc 53]
+[17:10:09.325] Found 127 dBm  C7BF3A9F-C83F-E266-E784-7175678CFEFE  (no name)
+[17:10:09.328] Found -86 dBm  0BD0474B-9A96-8B65-8A04-F5825A69657B  (no name)  mfg(company=0x004c)=[4c 00 09 08 13 3f c0 a8 04 16 1b 58 16 08 00 66 c0 a9 5b a1 c8 5a]
+[17:10:09.594] Found -83 dBm  CA3C3140-6AEC-9DB8-28EA-C7EA5728400E  iPhone  mfg(company=0x004c)=[4c 00 0c 0e 00 b8 06 65 cf bf 1b bd 61 e0 e0 ac 80 61 10 06 70 1d e3 6c 29 38]
+[17:10:09.602] Found -73 dBm  A8C089C9-703D-F44F-4526-E091743ECF56  Q312020  services=[C74EDD21-763C-4E54-85A8-43BB75035D75]
+[17:10:09.610] Found -87 dBm  808A9581-B398-45E3-8B90-7A065368C7C2  (no name)  mfg(company=0x004c)=[4c 00 10 05 04 14 d7 f6 e5]
+[17:10:09.618] Found -77 dBm  B4B6E72A-02CB-3A78-1FA0-80274B8CC807  (no name)  services=[FE9F]
+[17:10:09.630] Found -89 dBm  FE29AC0B-5122-3EC6-F187-A8365597BA88  (no name)  mfg(company=0x004c)=[4c 00 10 06 00 1d d6 26 3a 78]
+[17:10:09.899] Found -50 dBm  12E9BECC-F01D-4958-C1EF-86D99CF74EED  (no name)  mfg(company=0x004c)=[4c 00 16 08 00 38 e1 f8 11 3d 9f ce]
+[17:10:09.908] Found -72 dBm  F416D328-672C-CB27-A06F-51080C47DC5C  (no name)  mfg(company=0x004c)=[4c 00 07 19 01 24 20 0b 32 8f 10 00 05 09 5e 1a d3 3e 7d c6 82 89 25 53 1b 5a 56 0c 7a]
+[17:10:09.914] Found -77 dBm  13BF62A7-8077-8213-FE5B-8FE5AEC88167  (no name)  mfg(company=0x004c)=[4c 00 09 08 13 db c0 a8 56 16 1b 58 16 08 00 d5 98 07 73 3b 3d ee]
+[17:10:09.917] Found -50 dBm  E8DD4C80-2000-801B-AEE5-930DA387CAA3  (no name)  mfg(company=0x004c)=[4c 00 10 05 01 18 4b bf 34]
+[17:10:09.929] Found -75 dBm  9F6C6B6F-42AD-E8D9-5D0A-FD8484EF07FD  (no name)  mfg(company=0x004c)=[4c 00 10 06 07 1d a8 af 48 08]
+[17:10:10.208] Found -78 dBm  D1770834-319C-4F47-1582-F5CD408C9452  (no name)  mfg(company=0x004c)=[4c 00 10 06 46 1d c5 65 de 48]
+[17:10:10.220] Found -65 dBm  9AF7E02A-62F7-337E-BD2C-35A88696F612  Black Shark MagCooler 5pro  <-- name match
+[17:10:10.227] Found 127 dBm  BE62AE4B-8449-262A-0F9A-68E583AD2DD3  (no name)  mfg(company=0x004c)=[4c 00 09 08 13 89 0a 00 00 29 1b 58 16 08 00 1f 69 ed 92 7b 9a f6]
+[17:10:10.517] Found -80 dBm  83027163-E6BD-7B48-0D45-24FFA505F287  (no name)  mfg(company=0x004c)=[4c 00 09 08 13 05 c0 a8 56 35 1b 58 16 08 00 16 94 ce 24 66 77 6f]
+[17:10:10.526] Found -72 dBm  28F1D437-A2F3-93F6-9ABF-6F5DC24FFECB  (no name)  mfg(company=0x004c)=[4c 00 10 06 06 19 54 f6 cf 78]
+[17:10:10.527] Found -71 dBm  C51ED7A1-6D4C-DC7C-7B08-A0657439096E  (no name)  mfg(company=0x004c)=[4c 00 10 06 06 19 54 f6 cf 78]
+[17:10:10.791] Found -74 dBm  716DFCEC-6F69-3B47-5BDB-FC2A243E6C7F  Govee_H60B0_7245  mfg(company=0x8843)=[43 88 ec 00 01 02 00]
+[17:10:10.807] Found -68 dBm  2B8D486F-87F2-7837-D0A5-EA74A246B1F6  (no name)
+[17:10:10.822] Found 127 dBm  BF4C51AE-D169-65CE-540A-663990F93D6D  Y014020  services=[C74EDD21-763C-4E54-85A8-43BB75035D75]
+[17:10:10.824] Found 127 dBm  31057014-3701-CC17-62EC-37D3F37BEE0A  (no name)  services=[FE78]  mfg(company=0x0065)=[65 00 01 d2 05]
+[17:10:11.099] Found -81 dBm  5B8E8B62-D5FF-B06D-0D76-51B0FEB3B083  [TV] Samsung The Frame (65)  mfg(company=0x0075)=[75 00 42 04 01 01 6f 00 7c 2d 25 37 ba 02 7c 2d 25 37 b9 9d 88 00 00 00 00 00]
+[17:10:11.103] Found -86 dBm  AAD70E86-EFED-B4E1-C3F7-C1D3B72B5F04  (no name)  mfg(company=0x004c)=[4c 00 09 08 13 03 c0 a8 56 d9 1b 58 16 08 00 60 b3 cd 05 04 68 49]
+[17:10:11.115] Found -88 dBm  B720B328-A6B7-3402-A44C-D8B99B327212  (no name)  mfg(company=0x004c)=[4c 00 12 02 a5 02]
+[17:10:11.128] Found 127 dBm  8CBDC48F-A813-B84C-B13F-70C9A1EAB4C2  65" Mini LED  mfg(company=0x0075)=[75 00 42 04 01 80 61 80 0d 3f 56 94 3d 82 0d 3f 56 94 3c 24 ea 02 3e ba e6 25]
+[17:10:11.409] Found -82 dBm  DBE0C864-A4DA-2BDF-2CB1-51DE311E6EBD  (no name)  mfg(company=0x004c)=[4c 00 10 06 46 1d c5 65 de 48]
+[17:10:11.431] Found -87 dBm  E8A62A2B-36B3-109B-D597-3DED2A8D7524  (no name)  mfg(company=0x004c)=[4c 00 10 06 07 1d 36 d2 c2 78]
+[17:10:11.721] Found -94 dBm  34FB2DD5-C178-D743-86B5-C5A94B703AF2  (no name)  mfg(company=0x004c)=[4c 00 09 08 13 ac c0 a8 56 19 1b 58 16 08 00 60 71 e7 cb 6f 51 0b]
+[17:10:11.734] Found -37 dBm  D97B45D7-E595-EDAE-D167-5E6596CCCEE5  (no name)  mfg(company=0x004c)=[4c 00 10 05 32 18 c5 33 a0]
+[17:10:12.000] Found -86 dBm  FD0823A5-0ABE-03BF-6815-B5E38F385635  (no name)  mfg(company=0x004c)=[4c 00 10 07 3e 1f cf 7e 28 76 48]
+[17:10:12.031] Found -83 dBm  257F18AB-33CC-6381-93F8-6A69E41DADE2  [TV] Samsung TU700D 50 TV  mfg(company=0x0075)=[75 00 42 04 01 01 67 e0 9d 13 75 44 db e2 9d 13 75 44 da 04 00 00 00 00 00 00]
+[17:10:12.307] Found -84 dBm  AB667B36-C6DE-64AF-EE48-B43B4BFC5501  (no name)  mfg(company=0x0ca5)=[a5 0c 03 15 c9 3c 1e b6 85 55 11 e4 b1 16 12 3b 93 f7 5c ba 00 ff e5 4d af]
+[17:10:12.336] Found -98 dBm  6644C521-4401-F0D1-2080-051DC222F072  (no name)  mfg(company=0x004c)=[4c 00 07 19 01 24 20 2b 88 8f 11 00 09 8c f9 a6 a0 c0 01 dd 55 8c 61 ec 11 05 89 ea 9a]
+[17:10:12.621] Found -87 dBm  C04E45F4-6713-9652-B3AA-614D300D7522  (no name)  mfg(company=0x004c)=[4c 00 10 06 4e 1d e4 0c b2 18]
+[17:10:12.628] Found -87 dBm  7FBD69DD-EA28-1991-1A68-D66B43E45246  (no name)  mfg(company=0x004c)=[4c 00 10 06 4e 1d e4 0c b2 18]
+[17:10:13.498] Found -71 dBm  4E49089F-E8B5-CB70-B136-573219C56AF6  (no name)  mfg(company=0x004c)=[4c 00 12 02 64 02 07 11 06 33 60 34 27 89 d9 0d 98 64 11 f9 c9 7a 18 72 81]
+[17:10:13.525] Found 127 dBm  70782E9A-BD50-319B-BE97-F6AB625E3AD9  티비  mfg(company=0x0075)=[75 00 42 04 01 80 66 54 44 a3 02 bc 13 56 44 a3 02 bc 12 01 00 00 00 00 00 00]
+[17:10:14.090] Found -76 dBm  5BB05772-8BD5-A611-1808-FF893779004A  (no name)  mfg(company=0x004c)=[4c 00 10 07 37 1f 09 21 32 45 e8]
+[17:10:14.103] Found -86 dBm  EF841862-6468-D108-1F6D-7D48BBD38902  (no name)  mfg(company=0x004c)=[4c 00 12 02 00 01]
+[17:10:14.128] Found -38 dBm  6983C556-9117-0BDE-A85C-70E4056870E6  (no name)  mfg(company=0x004c)=[4c 00 16 08 00 02 ed 20 7d d0 56 d7]
+[17:10:14.412] Found -68 dBm  A44FEFEB-E30A-8305-DF51-A083044D167A  (no name)
+[17:10:14.427] Probing 10 candidate device(s) for a custom cooler service …
+[17:10:14.427] Probe → Black Shark MagCooler 5pro (-64 dBm) …
+[17:10:14.982] ★★★ COOLER IDENTIFIED: Black Shark MagCooler 5pro (9AF7E02A-62F7-337E-BD2C-35A88696F612) — dumping full GATT ★★★
+[17:10:14.982] [Service] Device Information
+[17:10:14.982]     [Char] PnP ID  props=[read]
+[17:10:14.982] [Service] 00010203-0405-0607-0809-0A0B0C0D1912
+[17:10:14.982]     [Char] 00010203-0405-0607-0809-0A0B0C0D2B12  props=[read,writeNoResp]
+[17:10:14.982] [Service] 0000A0A0-3C17-D293-8E48-14FE2E4DA212
+[17:10:14.982]     [Char] A001  props=[writeNoResp]
+[17:10:14.982]     [Char] A002  props=[notify]
+[17:10:14.982]     [Char] A003  props=[notify]
+[17:10:15.041]       value PnP ID = 02 8a 24 66 82 01 00  "..$f..."
+[17:10:15.101]       value 00010203-0405-0607-0809-0A0B0C0D2B12 = 00  "."
+[17:10:15.101]         [Descriptor] Characteristic User Description
+[17:10:15.163]         [Descriptor] Client Characteristic Configuration
+[17:10:15.222]         [Descriptor] Client Characteristic Configuration

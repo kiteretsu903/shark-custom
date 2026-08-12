@@ -72,6 +72,15 @@ Measured on the device:
 | `06 05 00 00 03 00` Silent | 3660 RPM | 19 W |
 | `06 05 00 00 04 05` Custom L5 | 5430 RPM | 35 W |
 
+## LED on/off — opcode 0x01
+
+    05 01 00 00 03      # lighting on
+    05 01 00 00 00      # lighting off
+
+Reply `85 01 00 00 01` (`01` accepted). The cooler does not report LED state in
+telemetry, so a client has to remember what it last set. Colour and effect
+selection were not captured — only the on/off pair, which is all that was needed.
+
 ## Other frames seen at connect
 
 The official app sends these once on connecting; their meaning is not yet decoded:
@@ -82,14 +91,10 @@ The official app sends these once on connecting; their meaning is not yet decode
     05 06 0a 00 00      # opcode 0x06 with a different parameter than 0x20
     05 06 18 00 00
     05 08 08 00 00
-    05 01 20 00 00
-    05 01 00 00 00      # sent when leaving the settings page
+    05 01 20 00 00      # read LED state (opcode 0x01 with param 0x20)
 
 `05 06 0a 00 00` and `05 06 18 00 00` are telemetry reads with other parameters
 and are the obvious next thing to explore for more sensor data.
-
-LED control was not captured (the LED page was inactive on this unit, which is in
-hardware "Standard" mode).
 
 ## Sharing the cooler with the official app
 

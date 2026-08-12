@@ -118,6 +118,12 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         send(Data([0x06, 0x05, 0x00, 0x00, mode.rawValue, level]))
     }
 
+    /// Turn the RGB lighting on or off. 0x03 is the lighting mode the official
+    /// app restores when switching the LED back on; 0x00 is off.
+    func setLED(on: Bool) {
+        send(Data([0x05, 0x01, 0x00, 0x00, on ? 0x03 : 0x00]))
+    }
+
     private var pollTimer: Timer?
 
     func startPolling() {
@@ -475,6 +481,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var telemetryItems: [NSMenuItem] = []
     private var currentMode: CoolingMode?
     private var currentLevel: UInt8 = 0
+    // The cooler does not report LED state, so track what we last set.
+    private var ledOn = true
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -576,6 +584,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(customItem)
         menu.addItem(.separator())
 
+        let led = NSMenuItem(title: ledOn ? "LED: On" : "LED: Off",
+                             action: #selector(toggleLED), keyEquivalent: "")
+        led.target = self
+        led.state = ledOn ? .on : .off
+        led.isEnabled = ble.isConnectedToCooler
+        menu.addItem(led)
+        menu.addItem(.separator())
+
         if ble.discovered.isEmpty {
             menu.addItem(withTitle: "Scanning…", action: nil, keyEquivalent: "")
         } else {
@@ -612,6 +628,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         telemetryItems[1].title = "Hot end      \(t.hot) °C"
         telemetryItems[2].title = "Fan          \(t.rpm) RPM"
         telemetryItems[3].title = "Power        \(t.watt) W"
+    }
+
+    @objc private func toggleLED() {
+        ledOn.toggle()
+        ble.setLED(on: ledOn)
+        rebuildMenu()
     }
 
     @objc private func pickMode(_ sender: NSMenuItem) {

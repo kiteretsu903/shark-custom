@@ -158,14 +158,35 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     /// True while the user wants us holding the cooler link.
     private(set) var attached = false
 
-    /// Attach to the known cooler (call AFTER the official app has connected).
+    /// True once a connection attempt has given up; drives the Retry button.
+    private(set) var connectFailed = false
+    private var connectWatchdog: DispatchWorkItem?
+
+    /// Attach to the known cooler, giving up after a timeout so the UI can
+    /// offer a retry rather than spinning forever.
     func attachToCooler() {
+        connectFailed = false
+        onDevices?()
         guard let cooler = central.retrievePeripherals(withIdentifiers: [KNOWN_COOLER_UUID]).first else {
-            log("Cooler not found in registry — is it powered on?"); return
+            log("Cooler not found — is it powered on and in range?")
+            connectFailed = true
+            onDevices?()
+            return
         }
         attached = true
         discovered[cooler.identifier] = cooler
         connect(cooler)
+
+        connectWatchdog?.cancel()
+        let watchdog = DispatchWorkItem { [weak self] in
+            guard let self, !self.isConnectedToCooler else { return }
+            log("Connection timed out — cooler may be off or out of range.")
+            self.connectFailed = true
+            self.central.cancelPeripheralConnection(cooler)
+            self.onDevices?()
+        }
+        connectWatchdog = watchdog
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12, execute: watchdog)
     }
 
     /// Release the cooler so the official app can connect freely.
@@ -220,8 +241,8 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
             if let cooler = c.retrievePeripherals(withIdentifiers: [KNOWN_COOLER_UUID]).first {
                 discovered[cooler.identifier] = cooler
                 onDevices?()
-                log("Ready, but NOT attached (so the official app can connect).")
-                log("→ Connect the cooler in Shark Arsenal first, then choose 'Attach to cooler' in the menu bar.")
+                log("Cooler known — connecting automatically …")
+                attachToCooler()
             } else {
                 log("Cooler not in system registry yet — scanning to find it …")
                 collecting = true
@@ -386,10 +407,13 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     private func finishProbe(_ p: CBPeripheral, cooler: Bool) {
         probeTimeout?.cancel()
         if cooler {
+            connectWatchdog?.cancel()
+            connectFailed = false
             foundCooler = true
             target = p
             currentProbe = nil
             let label = adv[p.identifier].flatMap { $0.name } ?? p.identifier.uuidString
+            attached = true
             log("★★★ COOLER IDENTIFIED: \(label) (\(p.identifier)) — dumping full GATT ★★★")
             dumpFully(p)
             onDevices?()
@@ -470,6 +494,105 @@ final class BLE: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 }
 
+// MARK: - Menu views
+
+/// Telemetry header: four readings in a 2×2 grid, values in aligned
+/// monospaced digits so they don't jitter as the numbers change.
+final class StatsView: NSView {
+    private let values: [NSTextField]
+    private static let captions = ["COLD END", "FAN", "HOT END", "POWER"]
+
+    init() {
+        values = Self.captions.map { _ in
+            let f = NSTextField(labelWithString: "—")
+            f.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
+            f.textColor = .labelColor
+            return f
+        }
+        super.init(frame: NSRect(x: 0, y: 0, width: 260, height: 84))
+
+        let columns: [NSStackView] = (0..<2).map { col in
+            let cells: [NSView] = (0..<2).map { row in
+                let idx = row * 2 + col
+                let caption = NSTextField(labelWithString: Self.captions[idx])
+                caption.font = .systemFont(ofSize: 9, weight: .semibold)
+                caption.textColor = .tertiaryLabelColor
+                let cell = NSStackView(views: [caption, values[idx]])
+                cell.orientation = .vertical
+                cell.alignment = .leading
+                cell.spacing = 1
+                return cell
+            }
+            let column = NSStackView(views: cells)
+            column.orientation = .vertical
+            column.alignment = .leading
+            column.spacing = 10
+            return column
+        }
+
+        let grid = NSStackView(views: columns)
+        grid.orientation = .horizontal
+        grid.distribution = .fillEqually
+        grid.spacing = 18
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(grid)
+        NSLayoutConstraint.activate([
+            grid.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            grid.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            grid.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            grid.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func update(_ t: Telemetry?) {
+        guard let t else {
+            values.forEach { $0.stringValue = "—" }
+            return
+        }
+        values[0].stringValue = "\(t.cold)°C"
+        values[1].stringValue = "\(t.rpm) rpm"
+        values[2].stringValue = "\(t.hot)°C"
+        values[3].stringValue = "\(t.watt) W"
+    }
+}
+
+/// The power-level "slider": five discrete steps, greyed out while Smart is on.
+final class LevelRowView: NSView {
+    let segmented = NSSegmentedControl(labels: ["1", "2", "3", "4", "5"],
+                                       trackingMode: .selectOne,
+                                       target: nil, action: nil)
+    private let caption = NSTextField(labelWithString: "POWER LEVEL")
+
+    init(width: CGFloat = 260) {
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 58))
+        caption.font = .systemFont(ofSize: 9, weight: .semibold)
+        caption.textColor = .tertiaryLabelColor
+        segmented.segmentDistribution = .fillEqually
+
+        let stack = NSStackView(views: [caption, segmented])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            segmented.heightAnchor.constraint(equalToConstant: 24),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Dim the whole row, caption included, when the control is unavailable.
+    func setEnabled(_ on: Bool) {
+        segmented.isEnabled = on
+        caption.textColor = on ? .tertiaryLabelColor : .quaternaryLabelColor
+        alphaValue = on ? 1.0 : 0.55
+    }
+}
+
 // MARK: - App / menu bar UI
 
 final class AppController: NSObject, NSApplicationDelegate {
@@ -478,11 +601,14 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private var textView: NSTextView!
     private var hexField: NSTextField!
-    private var telemetryItems: [NSMenuItem] = []
+    private weak var statsView: StatsView?
+    private weak var levelRow: LevelRowView?
     private var currentMode: CoolingMode?
     private var currentLevel: UInt8 = 0
-    // The cooler does not report LED state, so track what we last set.
+    // The cooler reports neither LED state nor mode, so track what we last set.
     private var ledOn = true
+    private var smartOn = true
+    private var showStatsInBar = true
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -535,99 +661,108 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func rebuildMenu() {
         let menu = NSMenu()
-        let state = ble.isConnectedToCooler ? "● Attached (recording)" : "○ Detached"
-        menu.addItem(withTitle: "FunCooler — \(state)", action: nil, keyEquivalent: "")
-        menu.addItem(.separator())
+        let connected = ble.isConnectedToCooler
 
-        if let t = ble.latest {
-            telemetryItems = [
-                menu.addItem(withTitle: "", action: nil, keyEquivalent: ""),
-                menu.addItem(withTitle: "", action: nil, keyEquivalent: ""),
-                menu.addItem(withTitle: "", action: nil, keyEquivalent: ""),
-                menu.addItem(withTitle: "", action: nil, keyEquivalent: ""),
-            ]
-            applyTelemetry(t)
-            menu.addItem(.separator())
-        } else {
-            telemetryItems = []
-        }
+        // Live readings.
+        let statsItem = NSMenuItem()
+        let stats = StatsView()
+        stats.update(connected ? ble.latest : nil)
+        statsItem.view = stats
+        statsView = stats
+        menu.addItem(statsItem)
 
-        let attach = NSMenuItem(title: "Attach to cooler", action: #selector(doAttach), keyEquivalent: "a")
-        attach.target = self
-        attach.isEnabled = !ble.isConnectedToCooler
-        menu.addItem(attach)
-        let detach = NSMenuItem(title: "Detach (release for official app)", action: #selector(doDetach), keyEquivalent: "d")
-        detach.target = self
-        menu.addItem(detach)
-        menu.addItem(.separator())
-
-        // Cooling modes — enabled once we hold the command characteristic.
-        menu.addItem(withTitle: "Cooling mode", action: nil, keyEquivalent: "")
-        for mode in CoolingMode.allCases where mode != .custom {
-            let item = NSMenuItem(title: "   \(mode.label)", action: #selector(pickMode(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = mode.rawValue
-            item.state = (currentMode == mode && currentLevel == 0) ? .on : .off
-            item.isEnabled = ble.isConnectedToCooler
-            menu.addItem(item)
-        }
-        let customMenu = NSMenu()
-        for lvl in UInt8(1)...UInt8(5) {
-            let li = NSMenuItem(title: "Level \(lvl)", action: #selector(pickCustom(_:)), keyEquivalent: "")
-            li.target = self
-            li.representedObject = lvl
-            li.state = (currentMode == .custom && currentLevel == lvl) ? .on : .off
-            customMenu.addItem(li)
-        }
-        let customItem = NSMenuItem(title: "   Custom", action: nil, keyEquivalent: "")
-        customItem.submenu = customMenu
-        menu.addItem(customItem)
-        menu.addItem(.separator())
-
-        let led = NSMenuItem(title: ledOn ? "LED: On" : "LED: Off",
-                             action: #selector(toggleLED), keyEquivalent: "")
-        led.target = self
-        led.state = ledOn ? .on : .off
-        led.isEnabled = ble.isConnectedToCooler
-        menu.addItem(led)
-        menu.addItem(.separator())
-
-        if ble.discovered.isEmpty {
-            menu.addItem(withTitle: "Scanning…", action: nil, keyEquivalent: "")
-        } else {
-            for (_, p) in ble.discovered {
-                let label = p.name ?? String(p.identifier.uuidString.prefix(8))
-                let title = "Connect: \(label)"
-                let item = NSMenuItem(title: title, action: #selector(connectDevice(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = p
-                menu.addItem(item)
+        // Connection state: silent when healthy, actionable when not.
+        if !connected {
+            let msg = ble.connectFailed ? "Cooler not found" : "Connecting…"
+            let status = NSMenuItem(title: "   \(msg)", action: nil, keyEquivalent: "")
+            status.isEnabled = false
+            menu.addItem(status)
+            if ble.connectFailed {
+                let retry = NSMenuItem(title: "   Retry", action: #selector(doAttach), keyEquivalent: "r")
+                retry.target = self
+                menu.addItem(retry)
             }
         }
         menu.addItem(.separator())
+
+        // Smart on → the cooler manages itself and the level row is inert.
+        let smart = NSMenuItem(title: "Smart cooling", action: #selector(toggleSmart), keyEquivalent: "")
+        smart.target = self
+        smart.state = smartOn ? .on : .off
+        smart.isEnabled = connected
+        menu.addItem(smart)
+
+        let levelItem = NSMenuItem()
+        let row = LevelRowView()
+        row.segmented.target = self
+        row.segmented.action = #selector(levelChanged(_:))
+        row.segmented.selectedSegment = Int(currentLevel == 0 ? 3 : currentLevel) - 1
+        row.setEnabled(connected && !smartOn)
+        levelItem.view = row
+        levelRow = row
+        menu.addItem(levelItem)
+        menu.addItem(.separator())
+
+        let led = NSMenuItem(title: "LED", action: #selector(toggleLED), keyEquivalent: "")
+        led.target = self
+        led.state = ledOn ? .on : .off
+        led.isEnabled = connected
+        menu.addItem(led)
+
+        let statsToggle = NSMenuItem(title: "Show stats in menu bar",
+                                     action: #selector(toggleStatsInBar), keyEquivalent: "")
+        statsToggle.target = self
+        statsToggle.state = showStatsInBar ? .on : .off
+        menu.addItem(statsToggle)
+        menu.addItem(.separator())
+
+
+        // Debugging tools stay available but out of the way.
+        let advanced = NSMenu()
         let showLog = NSMenuItem(title: "Show Log Window", action: #selector(showLog), keyEquivalent: "l")
         showLog.target = self
-        menu.addItem(showLog)
-        let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        advanced.addItem(showLog)
+        advanced.addItem(.separator())
+        if ble.discovered.isEmpty {
+            advanced.addItem(withTitle: "Scanning…", action: nil, keyEquivalent: "")
+        } else {
+            for (_, p) in ble.discovered {
+                let label = p.name ?? String(p.identifier.uuidString.prefix(8))
+                let item = NSMenuItem(title: "Connect: \(label)",
+                                      action: #selector(connectDevice(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = p
+                advanced.addItem(item)
+            }
+        }
+        let advancedItem = NSMenuItem(title: "Advanced", action: nil, keyEquivalent: "")
+        advancedItem.submenu = advanced
+        menu.addItem(advancedItem)
+
+        let quit = NSMenuItem(title: "Quit FunCooler", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
         statusItem.menu = menu
     }
 
-    /// Live readout next to the menu bar icon, plus the open menu's rows.
+    /// Refresh the menu bar button and the open menu's live rows.
     private func updateStatusTitle(_ t: Telemetry) {
-        if let btn = statusItem.button {
-            btn.title = " \(t.cold)°  \(t.rpm)rpm"
-            btn.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        }
-        if telemetryItems.isEmpty { rebuildMenu() } else { applyTelemetry(t) }
+        refreshStatusItem()
+        statsView?.update(t)
     }
 
-    private func applyTelemetry(_ t: Telemetry) {
-        guard telemetryItems.count == 4 else { return }
-        telemetryItems[0].title = "Cold end     \(t.cold) °C"
-        telemetryItems[1].title = "Hot end      \(t.hot) °C"
-        telemetryItems[2].title = "Fan          \(t.rpm) RPM"
-        telemetryItems[3].title = "Power        \(t.watt) W"
+    /// The button shows the icon alone, or icon plus a compact readout.
+    private func refreshStatusItem() {
+        guard let btn = statusItem.button else { return }
+        btn.image = NSImage(systemSymbolName: "thermometer.snowflake",
+                            accessibilityDescription: "FunCooler")
+        if showStatsInBar, let t = ble.latest, ble.isConnectedToCooler {
+            btn.title = "  \(t.cold)°  \(t.rpm)"
+            btn.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+            btn.imagePosition = .imageLeading
+        } else {
+            btn.title = ""
+            btn.imagePosition = .imageOnly
+        }
     }
 
     @objc private func toggleLED() {
@@ -636,20 +771,33 @@ final class AppController: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
-    @objc private func pickMode(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? UInt8,
-              let mode = CoolingMode(rawValue: raw) else { return }
-        ble.setMode(mode)
-        currentMode = mode
-        currentLevel = 0
+    /// Smart hands control back to the cooler; turning it off pins the fan to
+    /// the chosen level via Custom mode.
+    @objc private func toggleSmart() {
+        smartOn.toggle()
+        if smartOn {
+            ble.setMode(.smart)
+            currentMode = .smart
+        } else {
+            if currentLevel == 0 { currentLevel = 3 }
+            ble.setMode(.custom, level: currentLevel)
+            currentMode = .custom
+        }
         rebuildMenu()
     }
 
-    @objc private func pickCustom(_ sender: NSMenuItem) {
-        guard let lvl = sender.representedObject as? UInt8 else { return }
-        ble.setMode(.custom, level: lvl)
-        currentMode = .custom
+    @objc private func levelChanged(_ sender: NSSegmentedControl) {
+        let lvl = UInt8(sender.selectedSegment + 1)
         currentLevel = lvl
+        smartOn = false
+        currentMode = .custom
+        ble.setMode(.custom, level: lvl)
+        rebuildMenu()
+    }
+
+    @objc private func toggleStatsInBar() {
+        showStatsInBar.toggle()
+        refreshStatusItem()
         rebuildMenu()
     }
 

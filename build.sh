@@ -26,7 +26,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleDisplayName</key>     <string>FunCooler</string>
     <key>CFBundleIdentifier</key>      <string>local.funcooler.control</string>
     <key>CFBundleVersion</key>         <string>1</string>
-    <key>CFBundleShortVersionString</key><string>0.1</string>
+    <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleExecutable</key>      <string>FunCooler</string>
     <key>LSMinimumSystemVersion</key>  <string>13.0</string>

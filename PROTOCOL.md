@@ -41,14 +41,17 @@ Reply (9 bytes):
     ^^ ^^ ^^ ^^ ^^ ^^ ^^^^^ ^^
     |  |  |  |  |  |  |     device power, watts
     |  |  |  |  |  |  fan RPM, uint16 little-endian (0x0DD4 = 3540)
-    |  |  |  |  |  hot end temp, °C
-    |  |  |  |  cold end temp, °C
+    |  |  |  |  |  hot end temp, °C  (SIGNED int8)
+    |  |  |  |  cold end temp, °C (SIGNED int8)
     |  |  bytes 2–3 are echoed straight back from the request
     |  opcode
     0x80 | 9
 
 The official app polls this every 2 seconds. Bytes `20 00` are simply the
 request's parameters echoed — not flags, as first assumed.
+
+**Both temperatures are signed.** The cold plate drops below freezing, so an
+unsigned read reports -11 °C as 245 °C.
 
 ## Set cooling mode — opcode 0x05
 

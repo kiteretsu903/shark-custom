@@ -1,5 +1,9 @@
 # FunCooler
 
+<p align="center">
+  <img src="Assets/FunCooler-icon.png" alt="FunCooler app icon" width="180">
+</p>
+
 A Mac menu bar app for the **Black Shark MagCooler 5 Pro** (FunCooler 5 Pro) phone cooler.
 Live temperatures, fan speed and power draw in the menu bar, plus fan and lighting
 control — without the official app.
@@ -7,7 +11,9 @@ control — without the official app.
 The cooler speaks an undocumented BLE protocol. It was reverse-engineered from
 scratch for this app; the full write-up is in [PROTOCOL.md](PROTOCOL.md).
 
-![FunCooler control panel showing live cooler telemetry and controls](docs/control-panel.png)
+<p align="center">
+  <img src="docs/control-panel.png" alt="FunCooler control panel showing live cooler telemetry and controls" width="500">
+</p>
 
 ## Why
 

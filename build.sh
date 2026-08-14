@@ -6,10 +6,17 @@ cd "$(dirname "$0")"
 
 APP="build/FunCooler.app"
 BIN="$APP/Contents/MacOS/FunCooler"
+ASSET_INFO="build/assetcatalog-info.plist"
 
 echo "Compiling…"
 rm -rf build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+xcrun actool Assets.xcassets \
+  --compile "$APP/Contents/Resources" \
+  --platform macosx \
+  --minimum-deployment-target 13.0 \
+  --app-icon AppIcon \
+  --output-partial-info-plist "$ASSET_INFO"
 
 swiftc -O \
   -target arm64-apple-macosx13.0 \
@@ -29,6 +36,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleExecutable</key>      <string>FunCooler</string>
+    <key>CFBundleIconName</key>        <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>  <string>13.0</string>
     <key>LSUIElement</key>             <true/>
     <key>NSBluetoothAlwaysUsageDescription</key>

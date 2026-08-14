@@ -570,9 +570,54 @@ final class PanelModel: ObservableObject {
     var onRetry: (() -> Void)?
 }
 
-/// The menu's contents. SwiftUI is used here deliberately: its Toggle and
-/// Slider render with the system's current control style (Liquid Glass on
-/// macOS 26+) while still accepting a tint, which NSSwitch does not allow.
+/// A compact switch for menu-hosted controls. macOS deliberately ignores tint
+/// requests for NSSwitch/SwiftUI's native switch in this context, so draw the
+/// track ourselves with the user's system accent colour.
+private struct AccentSwitchToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        SwitchBody(configuration: configuration)
+    }
+
+    private struct SwitchBody: View {
+        let configuration: Configuration
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var hovering = false
+
+        var body: some View {
+            Button {
+                configuration.isOn.toggle()
+            } label: {
+                HStack(spacing: 12) {
+                    configuration.label
+                    Spacer(minLength: 8)
+                    ZStack(alignment: configuration.isOn ? .trailing : .leading) {
+                        Capsule()
+                            .fill(configuration.isOn
+                                  ? Color(nsColor: .controlAccentColor)
+                                  : Color.primary.opacity(hovering ? 0.22 : 0.14))
+                        Circle()
+                            .fill(.white)
+                            .padding(2)
+                            .shadow(color: .black.opacity(0.22), radius: 1, y: 0.5)
+                    }
+                    .frame(width: 29, height: 17)
+                    .overlay {
+                        Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+                    }
+                    .animation(.easeOut(duration: 0.13), value: configuration.isOn)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(isEnabled ? 1 : 0.45)
+            .onHover { hovering = $0 }
+        }
+    }
+}
+
+/// The menu's contents. SwiftUI keeps the panel responsive while it is open;
+/// the custom toggle style above supplies the coloured state users expect from
+/// ordinary app controls.
 struct ControlPanel: View {
     @ObservedObject var model: PanelModel
 
@@ -623,6 +668,7 @@ struct ControlPanel: View {
                     caption(String(Int(model.level.rounded())))
                 }
                 Slider(value: level, in: 1...5, step: 1)
+                    .tint(Color(nsColor: .controlAccentColor))
                     .disabled(!model.connected || model.smartOn)
             }
             .opacity(model.connected && !model.smartOn ? 1 : 0.5)
@@ -633,10 +679,7 @@ struct ControlPanel: View {
             Toggle("Show stats in menu bar", isOn: stats)
         }
         .font(.system(size: 12.5))
-        // Left untinted on purpose: macOS toggles follow the system accent
-        // colour and ignore .tint() by design (confirmed by Apple on the
-        // developer forums), so the switches match the rest of the system.
-        .toggleStyle(.switch)
+        .toggleStyle(AccentSwitchToggleStyle())
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(width: 250)

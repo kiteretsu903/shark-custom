@@ -7,6 +7,8 @@ control — without the official app.
 The cooler speaks an undocumented BLE protocol. It was reverse-engineered from
 scratch for this app; the full write-up is in [PROTOCOL.md](PROTOCOL.md).
 
+![FunCooler control panel showing live cooler telemetry and controls](docs/control-panel.png)
+
 ## Why
 
 The MacBook Air M4 is fanless: it cools passively, so under sustained load it
@@ -45,7 +47,8 @@ Quit FunCooler                      ⌘Q
 ## Requirements
 
 - Apple Silicon Mac, macOS 13 or later (developed and tested on macOS 27)
-- Xcode command line tools (`swiftc`) for building
+- Xcode, including its command-line compiler (`swiftc`) and asset compiler
+  (`actool`), for building
 - A Black Shark MagCooler 5 Pro, powered on and in range
 
 ## Build and run
@@ -58,8 +61,9 @@ open build/FunCooler.app
 macOS will ask for Bluetooth permission the first time — click **Allow**. The app
 lives only in the menu bar (no Dock icon).
 
-`build.sh` compiles `Sources/main.swift`, assembles `build/FunCooler.app`, and
-ad-hoc signs it. Two details matter and are easy to get wrong:
+`build.sh` compiles `Sources/main.swift`, packages the app icon asset catalog,
+assembles `build/FunCooler.app`, and ad-hoc signs it. Two details matter and are
+easy to get wrong:
 
 - The bundle **must** carry `NSBluetoothAlwaysUsageDescription`. Without it macOS
   kills the process the instant it touches CoreBluetooth (this is also why a
@@ -81,9 +85,9 @@ macOS attributes the Bluetooth request to the parent process and aborts it.
 - **The cooler never reports its mode or LED state.** The app remembers your
   choices and re-applies them on connect. If you change something from the
   official app in the meantime, the menu can disagree until you toggle it once.
-- **The switches are not tinted.** macOS controls follow the system accent colour
-  and ignore `.tint()` by design ([Apple engineer's reply][tint]), so colouring
-  them would mean drawing custom controls instead of native ones.
+- **The switches use your system accent colour.** macOS ignores `.tint()` for
+  native switches in a menu ([Apple engineer's reply][tint]), so the popup uses
+  a compact custom switch track while preserving standard interaction.
 - **Rebuilding re-triggers the Bluetooth prompt.** Ad-hoc signing gives the app a
   new identity on every build, so macOS asks again. A stable signing certificate
   would avoid it.
@@ -111,6 +115,7 @@ locked out. A phone takes the connection exclusively.
 | Path | Purpose |
 |---|---|
 | `Sources/main.swift` | The whole app: BLE client, protocol, SwiftUI menu panel |
+| `Assets.xcassets/AppIcon.appiconset` | App icon: cyan-lit cooler fan and snowflake |
 | `build.sh` | Builds and ad-hoc signs `build/FunCooler.app` |
 | `PROTOCOL.md` | The reverse-engineered protocol and how it was captured |
 | `tools/parse_btsnoop.py` | Extracts ATT writes from an Android btsnoop capture |

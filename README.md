@@ -1,7 +1,7 @@
 # FunCooler
 
 <p align="center">
-  <img src="Assets/FunCooler-icon.png" alt="FunCooler app icon" width="180">
+  <img src="docs/app-icon.png" alt="FunCooler macOS app icon" width="180">
 </p>
 
 A Mac menu bar app for the **Black Shark MagCooler 5 Pro** (FunCooler 5 Pro) phone cooler.

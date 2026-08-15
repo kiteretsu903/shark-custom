@@ -24,6 +24,15 @@ Download [the latest release](https://github.com/kiteretsu903/shark-custom/relea
 open the DMG, and drag **FunCooler.app** to **Applications**. On first launch,
 allow Bluetooth access when macOS asks.
 
+FunCooler is **ad-hoc signed, not notarized**, so macOS may block the first
+launch. Try opening the app once, dismiss the warning, then go to **System
+Settings → Privacy & Security** and click **Open Anyway**. If that button does
+not appear after dragging the app to **Applications**, run:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/FunCooler.app"
+```
+
 **Requirements:** Apple Silicon, macOS 13 or later, and a powered-on Black Shark
 MagCooler 5 Pro.
 
